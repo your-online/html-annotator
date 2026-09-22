@@ -1533,7 +1533,7 @@
   }
   document.getElementById("la-toggle").addEventListener("click", function () { zetModus(!overlay); });
   /* Sneltoets ⌘⇧0 (Ctrl+Shift+0): staat er tekst geselecteerd, dan is dat "Annotate selection" op de
-     selectie; anders schakelt hij de regio-modus, net als de knop rechtsonder (Luc 22-09). Capture-fase,
+     selectie; anders schakelt hij de regio-modus, net als de knop rechtsonder (2026-09-22). Capture-fase,
      zodat een pagina met eigen keydown-handlers hem niet wegvangt; niet in een invoerveld. */
   document.addEventListener("keydown", function (ev) {
     if (!(ev.metaKey || ev.ctrlKey) || !ev.shiftKey || (ev.code !== "Digit0" && ev.key !== "0" && ev.key !== ")")) return;
