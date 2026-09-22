@@ -1532,6 +1532,18 @@
     });
   }
   document.getElementById("la-toggle").addEventListener("click", function () { zetModus(!overlay); });
+  /* Sneltoets ⌘⇧0 (Ctrl+Shift+0): staat er tekst geselecteerd, dan is dat "Annotate selection" op de
+     selectie; anders schakelt hij de regio-modus, net als de knop rechtsonder (Luc 22-09). Capture-fase,
+     zodat een pagina met eigen keydown-handlers hem niet wegvangt; niet in een invoerveld. */
+  document.addEventListener("keydown", function (ev) {
+    if (!(ev.metaKey || ev.ctrlKey) || !ev.shiftKey || (ev.code !== "Digit0" && ev.key !== "0" && ev.key !== ")")) return;
+    var a = document.activeElement;
+    if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) && !a.closest("#la-popup")) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if (selKnop) { selKnop.click(); return; }
+    if (huidigeSelectie()) { document.dispatchEvent(new MouseEvent("mouseup")); setTimeout(function () { if (selKnop) selKnop.click(); }, 30); return; }   // knop komt via mouseup
+    zetModus(!overlay);
+  }, true);
 
   /* ---- tekstselectie --------------------------------------------- */
   var selKnop = null;
