@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import socket
+import shutil
 import signal
 import subprocess
 import sys
@@ -90,6 +91,88 @@ def start_bridge(root, poort):
                        % (poort, rc, sys.executable, log.read()))
 
 
+def p_route_checks(basis):
+    """B2: /p/ serveert alleen pagina's en statische assets onder home, zonder CORS,
+    en nooit dotfiles of dot-mappen (ook niet via een symlink)."""
+    n = 0
+    home = os.path.realpath(os.path.expanduser("~"))
+    werk = tempfile.mkdtemp(prefix="html-annotator-ptest-", dir=home)
+    rel = os.path.basename(werk)
+    try:
+        for naam, inhoud in (("pagina.html", "<p>ok</p>"), ("stijl.css", "p{}"),
+                             ("notities.txt", "geheim"), ("sleutel", "geheim"),
+                             (".env", "TOKEN=x")):
+            with open(os.path.join(werk, naam), "w", encoding="utf-8") as f:
+                f.write(inhoud)
+        os.makedirs(os.path.join(werk, ".verborgen"))
+        with open(os.path.join(werk, ".verborgen", "x.html"), "w", encoding="utf-8") as f:
+            f.write("<p>verborgen</p>")
+        os.symlink(os.path.join(werk, ".verborgen", "x.html"), os.path.join(werk, "link.html"))
+
+        code, hdr, raw = http("GET", basis + "/p/%s/pagina.html" % rel)
+        n += check("B2 /p/ html 200", code == 200 and raw == b"<p>ok</p>")
+        n += check("B2 /p/ zonder CORS",
+                   not any(k.lower().startswith("access-control-") for k in hdr))
+        code, hdr, _ = http("GET", basis + "/p/%s/pagina.html" % rel,
+                            headers={"Origin": "http://127.0.0.1:1"})
+        n += check("B2 /p/ ook voor loopback-origin zonder CORS",
+                   code == 200 and "Access-Control-Allow-Origin" not in hdr)
+        code, _, _ = http("GET", basis + "/p/%s/stijl.css" % rel)
+        n += check("B2 /p/ css 200", code == 200)
+        for naam in ("notities.txt", "sleutel"):
+            code, _, raw = http("GET", basis + "/p/%s/%s" % (rel, naam))
+            n += check("B2 /p/ %s (type) is 403" % naam, code == 403 and b"geheim" not in raw)
+        for pad in (".env", ".verborgen/x.html", "link.html", "%2Eenv"):
+            code, _, raw = http("GET", basis + "/p/%s/%s" % (rel, pad))
+            n += check("B2 /p/ %s (dot) is 403" % pad,
+                       code == 403 and b"TOKEN" not in raw and b"verborgen</p>" not in raw)
+        code, _, _ = http("GET", basis + "/p/.zshrc")
+        n += check("B2 /p/.zshrc is 403", code == 403)
+    finally:
+        shutil.rmtree(werk, ignore_errors=True)
+    return n
+
+
+def allowlist_checks(basis, poort, root):
+    """B30: alleen loopback-, file://- en null-origins; al het andere 403 vóór de handler."""
+    n = 0
+    for origin in ("http://127.0.0.1:%d" % poort, "http://localhost:8931",
+                   "http://[::1]:5173", "null", "file://"):
+        code, hdr, _ = http("POST", basis + "/state", {"slug": "zz-origin"},
+                            headers={"Origin": origin})
+        n += check("B30 %s mag POSTen" % origin,
+                   code == 200 and hdr.get("Access-Control-Allow-Origin") == origin)
+        code, hdr, _ = http("OPTIONS", basis + "/save", headers={"Origin": origin})
+        n += check("B30 %s preflight 204" % origin,
+                   code == 204 and hdr.get("Access-Control-Allow-Origin") == origin)
+    code, hdr, _ = http("POST", basis + "/state", {"slug": "zz-origin"})
+    n += check("B30 zonder Origin (curl/hook) mag",
+               code == 200 and "Access-Control-Allow-Origin" not in hdr)
+
+    for origin in ("https://evil.example", "http://127.0.0.1.evil.example",
+                   "http://localhost.evil.example:8791", "chrome-extension://abc",
+                   "data:", "https://127.0.0.1@evil.example"):
+        code, hdr, _ = http("OPTIONS", basis + "/save", headers={"Origin": origin})
+        n += check("B30 %s preflight 403" % origin,
+                   code == 403 and "Access-Control-Allow-Origin" not in hdr)
+    # De bijwerking telt, niet het antwoord: een no-cors-POST mag niets doen.
+    for pad, body in (("/state-save", {"slug": "zz-evil", "key": "k", "value": 1}),
+                      ("/save", {"slug": "zz-evil", "annotation": {"id": "e", "comment": "x"}}),
+                      ("/sessie", {"prompt": "doe iets"})):
+        code, hdr, _ = http("POST", basis + pad, body,
+                            headers={"Origin": "https://evil.example"})
+        n += check("B30 %s van vreemde origin 403" % pad,
+                   code == 403 and "Access-Control-Allow-Origin" not in hdr)
+    n += check("B30 vreemde origin schreef niets",
+               not os.path.exists(os.path.join(root, "zz-evil")))
+    # DNS-rebinding: een eigen naam die naar 127.0.0.1 wijst is same-origin met de bridge.
+    code, _, _ = http("GET", basis + "/ping", headers={"Host": "evil.example:%d" % poort})
+    n += check("B30 vreemde Host 403", code == 403)
+    code, _, _ = http("GET", basis + "/ping", headers={"Host": "localhost:%d" % poort})
+    n += check("B30 Host localhost mag", code == 200)
+    return n
+
+
 def main():
     n = 0
     root = tempfile.mkdtemp(prefix="ann-root-")
@@ -126,14 +209,18 @@ def main():
         n += check("B1 ping identiteit", ping.get("bridge") == "html-annotator")
         from html_annotator import __version__
         n += check("B1 ping release", ping.get("release") == __version__)
-        n += check("B1 CORS *", hdr.get("Access-Control-Allow-Origin") == "*")
+        n += check("B1 geen CORS *", hdr.get("Access-Control-Allow-Origin") != "*")
 
         code, _, _ = http("OPTIONS", basis + "/save")
         n += check("B1 OPTIONS 204", code == 204)
 
+        n += allowlist_checks(basis, poort, root)
+
         code, _, raw = http("GET", basis + "/p/../etc/passwd")
         body = json.loads(raw.decode("utf-8"))
         n += check("B2 /p/ buiten home is 403", code == 403 and body.get("ok") is False)
+
+        n += p_route_checks(basis)
 
         for pad in ("/session", "/save", "/delete", "/remove-all", "/resolve",
                     "/state", "/state-save", "/sessie"):

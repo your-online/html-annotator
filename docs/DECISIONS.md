@@ -288,3 +288,28 @@ CSS gebeurt (`input:checked ~ tabel`) verandert geen attribuut en levert dus
 geen hertekening op; dat staat als voorwaarde in het handboek. Een periodieke
 sanity-render zou dat dekken, maar kost stroom op elke pagina en is voor de
 KPI-pagina's (die `classList.toggle` gebruiken) niet nodig.
+
+## 2026-09-26 — Bridge: origin-allowlist, /p/ zonder CORS en zonder dotfiles
+
+Aanleiding: `GET /p/.zshrc` gaf 200 met `Access-Control-Allow-Origin: *`,
+dus elke website kon via `fetch("http://127.0.0.1:8791/p/...")` bestanden
+onder home lezen (`~/.ssh`, `.env`), afhankelijk van de browser. Ook de
+POST-routes hadden CORS `*`.
+
+- `/p/` stuurt geen CORS-headers meer; de pagina is same-origin.
+- `/p/` serveert alleen html/htm, css, js, afbeeldingen en json, en weigert
+  elk pad met een onderdeel dat met `.` begint, ook na het volgen van een symlink.
+- Elk verzoek met een `Origin` buiten de allowlist is 403 vóór de handler.
+  CORS alleen beschermt het antwoord; een `no-cors`-POST zou anders nog steeds
+  schrijven of `/sessie` een `claude://`-prompt laten openen.
+- Allowlist, afgeleid uit de origin-log (`bridge.log`, 2026-08-18 → 09-26):
+  loopback op elke poort (de /p/-pagina's zelf, testbridges, dev-servers als
+  `localhost:8931`), `file://` en `null` (pagina als bestand geopend: ~1.500
+  verzoeken met `null`). Geen Origin (curl, hooks) blijft toegestaan.
+- `Host` moet een loopback-naam zijn, tegen DNS-rebinding.
+
+Restrisico, bewust: `null` blijft toegestaan omdat file://-pagina's in Chrome
+dat sturen. Een website kan `null` ook sturen vanuit een sandboxed iframe en
+dan de POST-routes aanroepen (niet `/p/` lezen). Chrome vraagt daarvoor
+Local Network Access-toestemming; Safari/Firefox mogelijk niet. `null` dicht
+kan zodra file://-gebruik weg is (levering via `/p/`, zie 2026-08-18).

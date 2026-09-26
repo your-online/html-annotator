@@ -40,24 +40,29 @@ Every criterion below carries two labels:
 
 ## Functional requirements
 
-<details><summary><strong>B1 — <code>/ping</code> returns 200, CORS <code>*</code>, OPTIONS 204.</strong></summary>
+<details><summary><strong>B1 — <code>/ping</code> returns 200, OPTIONS 204, no CORS <code>*</code>.</strong></summary>
 
 *TESTED · platform: all*
 
-*Expected behaviour:* `GET /ping` answers; any origin is allowed; a
-preflight is 204.
+*Expected behaviour:* `GET /ping` answers; a preflight from an allowed
+origin is 204. CORS echoes the allowed origin, never `*` (see B30).
 
 *Evidence:* `tests/test_bridge_contract.py`.
 
-*Gap:* no mutation on identity or CORS.
+*Gap:* no mutation on identity.
 
 </details>
 
-<details><summary><strong>B2 — <code>/p/</code> outside home is 403.</strong></summary>
+<details><summary><strong>B2 — <code>/p/</code> serves only pages and static assets under home, without CORS.</strong></summary>
 
 *TESTED · platform: all*
 
-*Expected behaviour:* a path that leaves the home directory is refused.
+*Expected behaviour:* a path that leaves the home directory is 403. So is
+any dotfile or dot-directory (`/p/.zshrc`, `.env`, `~/.ssh/…`), also when
+reached through a symlink, and any extension outside html/htm, css, js,
+png/jpg/jpeg/gif/svg/webp and json. `/p/` responses carry no
+`Access-Control-*` headers: the page is same-origin with the bridge, and
+another site must not be able to read what `/p/` returns.
 
 *Evidence:* `tests/test_bridge_contract.py` · `tests/mutate-contract.sh`.
 
@@ -339,6 +344,25 @@ pill and decide independently: accepting one leaves the other pending, and
 *Evidence:* `tests/case-16-suggest-gedeelde-key.mjs` ·
 `tests/case-17-suggest-losse-keys.mjs`; decision in `docs/DECISIONS.md`
 (2026-08-31).
+
+</details>
+
+<details><summary><strong>B30 — Only loopback, <code>file://</code> and <code>null</code> origins reach the bridge.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* a request with an `Origin` other than
+`http(s)://127.0.0.1|localhost|[::1]` (any port), `file://` or `null` is
+403 before any handler runs, so a cross-site `no-cors` POST has no side
+effect either. A request without `Origin` (curl, hooks, CLI) is allowed.
+A `Host` header that is not a loopback name is 403 (DNS rebinding).
+Allowed origins get their own origin back in `Access-Control-Allow-Origin`.
+
+*Evidence:* `tests/test_bridge_contract.py` · `tests/mutate-contract.sh`.
+Decision in `docs/DECISIONS.md` (2026-09-26).
+
+*Gap:* `null` stays allowed for pages opened as a file; a site can also
+send `null` from a sandboxed iframe.
 
 </details>
 

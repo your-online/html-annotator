@@ -67,8 +67,8 @@ python3 - <<'PY' "$BRIDGE"
 import sys
 p = sys.argv[1]
 t = open(p).read()
-oud = 'return self._json(403, {"ok": False, "error": "pad buiten home"})'
-nieuw = 'return self._json(200, {"ok": True, "error": "MUTATIE"})'
+oud = 'return self._json(403, {"ok": False, "error": "pad buiten home"}, cors=False)'
+nieuw = 'return self._json(200, {"ok": True, "error": "MUTATIE"}, cors=False)'
 if oud not in t:
     raise SystemExit("anker voor /p/-403 ontbreekt")
 open(p, "w").write(t.replace(oud, nieuw, 1))
@@ -77,6 +77,42 @@ if python3 ./test_bridge_contract.py >/tmp/ann-mut-p403.txt 2>&1; then
   zeg 1 "B2 blijft groen na 403→200"
 else
   zeg 0 "B2 wordt rood als /p/ buiten home wordt doorgelaten"
+fi
+rsync -a "$ORIG/html_annotator/bridge.py" "$BRIDGE"
+
+# Dotfile-weigering uit → /p/.env serveert weer. B2 moet dit vangen.
+python3 - <<'PY' "$BRIDGE"
+import sys
+p = sys.argv[1]
+t = open(p).read()
+oud = 'if any(d.startswith(".") for d in delen + list(doel.relative_to(home).parts)):'
+nieuw = 'if False:  # MUTATIE: dotfiles door'
+if oud not in t:
+    raise SystemExit("anker voor dotfile-weigering ontbreekt")
+open(p, "w").write(t.replace(oud, nieuw, 1))
+PY
+if python3 ./test_bridge_contract.py >/tmp/ann-mut-dot.txt 2>&1; then
+  zeg 1 "B2 blijft groen als /p/ dotfiles serveert"
+else
+  zeg 0 "B2 wordt rood als /p/ dotfiles serveert"
+fi
+rsync -a "$ORIG/html_annotator/bridge.py" "$BRIDGE"
+
+# Origin-allowlist uit → elke site mag POSTen. B30 moet dit vangen.
+python3 - <<'PY' "$BRIDGE"
+import sys
+p = sys.argv[1]
+t = open(p).read()
+oud = '    if origin in ("null", "file://"):\n        return True\n'
+nieuw = '    return True  # MUTATIE: elke origin\n'
+if oud not in t:
+    raise SystemExit("anker voor origin-allowlist ontbreekt")
+open(p, "w").write(t.replace(oud, nieuw, 1))
+PY
+if python3 ./test_bridge_contract.py >/tmp/ann-mut-origin.txt 2>&1; then
+  zeg 1 "B30 blijft groen als elke origin mag"
+else
+  zeg 0 "B30 wordt rood als de origin-allowlist weg is"
 fi
 rsync -a "$ORIG/html_annotator/bridge.py" "$BRIDGE"
 

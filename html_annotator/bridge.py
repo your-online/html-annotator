@@ -688,6 +688,48 @@ def h_sessie(payload):
     return {"ok": True, "geopend": url[:80] + ("..." if len(url) > 80 else "")}
 
 
+# /p/ serveert alleen pagina's en hun gangbare statische assets.
+P_SOORTEN = {
+    ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
+    ".json": "application/json; charset=utf-8",
+}
+
+LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
+
+
+def host_toegestaan(host):
+    """Alleen loopback-namen. Een andere Host betekent DNS-rebinding: een site die
+    zijn eigen naam naar 127.0.0.1 laat wijzen en zo 'same-origin' met de bridge is."""
+    if not host:
+        return True
+    naam = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+    return naam.lower() in LOOPBACK
+
+
+def origin_toegestaan(origin):
+    """Origins die de bridge mogen aanroepen (zie docs/DECISIONS.md, 2026-09-26).
+
+    - http(s)://127.0.0.1|localhost|[::1] op elke poort: de /p/-pagina's zelf,
+      testbridges op een losse poort en lokale dev-servers.
+    - "null" en "file://": een pagina die als bestand geopend is (Chrome stuurt
+      "null", andere runtimes "file://"). Restrisico: een site kan ook "null"
+      sturen vanuit een sandboxed iframe.
+    Een verzoek zonder Origin (curl, hooks, CLI) komt hier niet langs."""
+    if origin in ("null", "file://"):
+        return True
+    try:
+        u = urllib.parse.urlsplit(origin)
+    except ValueError:
+        return False
+    naam = (u.hostname or "").lower()
+    if naam == "::1":
+        naam = "[::1]"
+    return u.scheme in ("http", "https") and naam in LOOPBACK
+
+
 ROUTES = {"/session": h_session, "/save": h_save, "/delete": h_delete,
           "/remove-all": h_remove_all, "/resolve": h_resolve,
           "/state": h_state, "/state-save": h_state_save,
@@ -708,46 +750,67 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[bridge] %s%s\n" % (fmt % args, (" origin=%s" % herkomst) if herkomst else ""))
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Alleen een toegestane origin krijgt CORS, en dan die origin zelf (geen "*").
+        origin = self.headers.get("Origin")
+        if origin is None or not origin_toegestaan(origin):
+            return
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 
-    def _json(self, code, obj):
+    def _json(self, code, obj, cors=True):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self._cors()
+        if cors:
+            self._cors()
         self.end_headers()
         self.wfile.write(body)
 
+    def _weiger(self):
+        """403 voor een verzoek van buiten: vreemde Host (DNS-rebinding) of Origin.
+        Wordt gecontroleerd vóór er iets gebeurt; CORS alleen beschermt het antwoord,
+        niet de bijwerking van een POST."""
+        if not host_toegestaan(self.headers.get("Host")):
+            self._json(403, {"ok": False, "error": "host niet toegestaan"}, cors=False)
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None and not origin_toegestaan(origin):
+            self._json(403, {"ok": False, "error": "origin niet toegestaan"}, cors=False)
+            return True
+        return False
+
     def do_OPTIONS(self):
+        if self._weiger():
+            return
         self.send_response(204)
         self._cors()
         self.end_headers()
 
     def _bestand(self, pad):
-        """Serveert een lokaal bestand, zodat de pagina same-origin met de bridge draait."""
+        """Serveert een lokaal bestand, zodat de pagina same-origin met de bridge draait.
+
+        Bewust zonder CORS-headers: de pagina is same-origin, en een andere site mag
+        het antwoord niet kunnen lezen. Alleen de soorten uit P_SOORTEN."""
+        soort = P_SOORTEN.get(os.path.splitext(pad)[1].lower())
+        if soort is None:
+            return self._json(403, {"ok": False, "error": "bestandstype niet toegestaan"}, cors=False)
         if not os.path.isfile(pad):
-            return self._json(404, {"ok": False, "error": "bestand niet gevonden: %s" % pad})
-        soort = {
-            ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
-            ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-            ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
-            ".json": "application/json; charset=utf-8",
-        }.get(os.path.splitext(pad)[1].lower(), "application/octet-stream")
+            return self._json(404, {"ok": False, "error": "bestand niet gevonden"}, cors=False)
         with open(pad, "rb") as f:
             body = f.read()
         self.send_response(200)
         self.send_header("Content-Type", soort)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self._cors()
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
+        if self._weiger():
+            return
         pad = self.path.split("?")[0]
         if pad == "/ping":
             # "version" is the wire protocol the snippet talks; "release" is
@@ -760,15 +823,21 @@ class Handler(BaseHTTPRequestHandler):
         if pad.startswith("/p/"):
             # URL-pad is altijd met forward slashes; op Windows maakt Path daar
             # backslashes van. Nooit buiten de home-map serveren.
+            # Dotfiles en dot-mappen (~/.ssh, .env, ~/.claude) nooit, ook niet via symlink.
             rel = urllib.parse.unquote(pad[3:])
             home = Path.home().resolve()
-            doel = Path(home, *[d for d in rel.split("/") if d]).resolve()
+            delen = [d for d in rel.split("/") if d]
+            doel = Path(home, *delen).resolve()
             if home not in doel.parents:
-                return self._json(403, {"ok": False, "error": "pad buiten home"})
+                return self._json(403, {"ok": False, "error": "pad buiten home"}, cors=False)
+            if any(d.startswith(".") for d in delen + list(doel.relative_to(home).parts)):
+                return self._json(403, {"ok": False, "error": "verborgen pad"}, cors=False)
             return self._bestand(str(doel))
         self._json(404, {"ok": False, "error": "onbekend pad"})
 
     def do_POST(self):
+        if self._weiger():
+            return
         pad = self.path.split("?")[0]
         fn = ROUTES.get(pad)
         if not fn:
