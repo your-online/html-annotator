@@ -6,7 +6,7 @@ Two independent commands:
   (symlink, or a copy with ``--copy``; copy is the default on Windows, where a
   symlink needs Developer Mode or admin rights).
 * ``install-hooks`` registers the SessionStart and PostToolUse hooks in
-  ``~/.claude/settings.local.json``. Idempotent: an existing annotator hook is
+  ``~/.claude/settings.json``. Idempotent: an existing annotator hook is
   replaced, other hooks are left alone.
 """
 

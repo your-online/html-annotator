@@ -77,7 +77,7 @@ this: without the bridge, feedback lands in localStorage and nothing is
 on disk.
 
 **Safety net, two layers.** Both run `bin/hook-ensure-bridge.py` from
-this skill, registered in `~/.claude/settings.local.json` by
+this skill, registered in `~/.claude/settings.json` by
 `python -m html_annotator install-hooks`:
 
 - **SessionStart** — one call per session, regardless of how that

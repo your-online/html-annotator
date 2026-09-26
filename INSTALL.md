@@ -68,7 +68,7 @@ python -m html_annotator install-hooks           # writes the two hooks
 python -m html_annotator install-hooks --print   # show, change nothing
 ```
 
-That writes into `~/.claude/settings.local.json` (a timestamped backup lands
+That writes into `~/.claude/settings.json` (a timestamped backup lands
 next to it) two entries that both call `bin/hook-ensure-bridge.py` with the
 same Python that ran the command:
 

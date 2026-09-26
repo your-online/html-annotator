@@ -323,9 +323,9 @@ def main():
     n += check("A4 install-hooks --print schrijft niets",
                droog.returncode == 0
                and "hook-ensure-bridge.py" in droog.stdout
-               and not os.path.isfile(os.path.join(home, ".claude", "settings.local.json")))
+               and not os.path.isfile(os.path.join(home, ".claude", "settings.json")))
     uit2 = cli(home, "install-hooks")
-    settings = os.path.join(home, ".claude", "settings.local.json")
+    settings = os.path.join(home, ".claude", "settings.json")
     hook_ok = False
     events = set()
     if os.path.isfile(settings):

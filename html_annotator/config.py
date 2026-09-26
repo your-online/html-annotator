@@ -121,7 +121,7 @@ def skills_dir():
 
 
 def settings_file():
-    return Path.home() / ".claude" / "settings.local.json"
+    return Path.home() / ".claude" / "settings.json"
 
 
 def python_exe():

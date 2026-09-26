@@ -324,3 +324,11 @@ akkoord na verzending. Alleen WhatsApp, omdat daar de platte-tekstprojectie van 
 één op één de body is; Teams en mail versturen HTML. De ontvanger op de kaart is de
 letterlijke tool-waarde, niet een naam, want de hash zit erover. Onderzoek, tests en
 livegang: `docs/verstuur-knop-onderzoek.md`.
+
+## 2026-09-26 — Hooks in settings.json; bevestiging inline
+
+`~/.claude/settings.local.json` laadt niet in een sessie met een andere cwd dan `~` (livetest: gate,
+nastap én de SessionStart-bridge-hook draaiden niet vanuit `~/Desktop`). `install-hooks` schrijft
+daarom naar `~/.claude/settings.json`. De bevestiging na Verstuur is geen `window.confirm()` meer
+maar een inline "Zeker? [Nee, cancel] [Ja, verstuur]" onder de knop, zodat hij ook in de Claude
+Desktop-sideviewer werkt (gemeten: die laadt de `/p/`-pagina niet in een frame).

@@ -22,6 +22,10 @@
   .la-send-status { color: #6b6b66; }
   .la-send-doel { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #4a4a45; }
   .la-draft.la-send-sent { opacity: .8; }
+  .la-send-zeker { display: none; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; color: #4a4a45; }
+  .la-send-zeker.open { display: flex; }
+  .la-send-zeker button { font: inherit; padding: 3px 10px; border-radius: 6px; cursor: pointer; background: #fff; color: #4a4a45; border: 1px solid #d6d6d0; }
+  .la-send-zeker button.la-send-ja { background: #1f7a4d; color: #fff; border-color: #1f7a4d; font-weight: 600; }
   .la-draft.la-send-ok { border-color: #1f7a4d; box-shadow: 0 0 0 2px rgba(31,122,77,.15); }
 </style>
 <script>
@@ -68,6 +72,11 @@
     var status = document.createElement("span"); status.className = "la-send-status";
     bar.appendChild(knop); bar.appendChild(status);
     kaart.appendChild(bar);
+    // Bevestiging inline i.p.v. window.confirm(): die werkt niet in ingebedde viewers.
+    var zeker = document.createElement("div"); zeker.className = "la-send-zeker";
+    zeker.innerHTML = '<span>Zeker?</span><button type="button" class="la-send-nee">Nee, cancel</button>' +
+      '<button type="button" class="la-send-ja">Ja, verstuur</button>';
+    kaart.appendChild(zeker);
     var akkoord = null; // {hash, approvalId}
     var kanaal = kaart.getAttribute("data-la-send-channel") || "";
     var naar = kaart.getAttribute("data-la-send-to") || "";
@@ -76,7 +85,8 @@
     bar.insertBefore(doel, status);
 
     var weiger = !viaBridge ? "open de pagina via de bridge (/p/...) om te versturen"
-      : ingelijst ? "Verstuur werkt niet in een ingebedde weergave"
+      : ingelijst ? "Verstuur werkt niet in een ingebedde weergave (frame in: " +
+          ((location.ancestorOrigins && Array.prototype.join.call(location.ancestorOrigins, ", ")) || document.referrer || "onbekend") + ")"
       : !ONTVANGER[kanaal] ? "Verstuur-knop bestaat nog niet voor kanaal '" + kanaal + "'"
       : !ONTVANGER[kanaal].test(naar) ? "ontvanger '" + naar + "' is geen geldige " + kanaal + "-recipient"
       : "";
@@ -106,13 +116,19 @@
       });
     }
 
+    function sluitZeker() { zeker.classList.remove("open"); }
     knop.addEventListener("click", function () {
       if (akkoord) { trekIn("ingetrokken met de knop"); return; }
       var v = velden(kaart, box);
       if (!v.channel || !v.to) { status.textContent = "kaart mist kanaal of ontvanger"; return; }
-      var samenvatting = "Versturen via " + v.channel + " aan " + v.to +
-        (v.subject ? "\nOnderwerp: " + v.subject : "") + "\n\n" + v.text + "\n\nDeze exacte tekst versturen?";
-      if (!window.confirm(samenvatting)) return;
+      zeker.classList.toggle("open");
+    });
+    zeker.querySelector(".la-send-nee").addEventListener("click", sluitZeker);
+    zeker.querySelector(".la-send-ja").addEventListener("click", function () {
+      sluitZeker();
+      // Opnieuw uitlezen: de tekst die nú op de kaart staat is wat wordt vastgelegd.
+      var v = velden(kaart, box);
+      if (!v.channel || !v.to) { status.textContent = "kaart mist kanaal of ontvanger"; return; }
       knop.disabled = true; status.textContent = "vastleggen…";
       post("/send-approve", { page: page(), key: key, channel: v.channel, to: v.to,
         subject: v.subject, text: v.text, html: v.html, session: v.session })
@@ -121,7 +137,7 @@
     });
 
     // Elke wijziging na de klik trekt het akkoord in, ook als de tekst later terugkomt.
-    box.addEventListener("input", function () { trekIn("tekst gewijzigd na de klik"); });
+    box.addEventListener("input", function () { sluitZeker(); trekIn("tekst gewijzigd na de klik"); });
     kaart.addEventListener("click", function (ev) {
       var b = ev.target.closest && ev.target.closest(".la-draft-bar button");
       if (b && !/la-draft-diff/.test(b.className)) trekIn("opmaak of herstel na de klik");

@@ -281,3 +281,33 @@ Voorgestelde tekst:
 > toch om toestemming, dan is er geen akkoord en verstuur je niet op eigen houtje.
 > Verandert de tekst na het akkoord, leg de nieuwe versie opnieuw voor. Opstellen via skill
 > `bericht-sturen`, de recap na een meeting via `recap-meeting`.
+
+## Livetest 26-09
+
+Verse sessie (cwd `~/Desktop`, auto mode), kaart `wa-luc-test2-2026-09-26` naar 31658730061.
+
+| Check | Uitkomst |
+|---|---|
+| Wachter eindigt na klik + OK met `ok=true` | ja (17:05:34) |
+| `send_message` met `vervolg.arguments` verstuurd | ja, `success: true` |
+| Toestemmingsvraag bij de verzending | nee (maar zie hieronder: gate draaide niet) |
+| Kaart automatisch "Verstuurd" | **nee**: state bleef `approved` |
+| Negatieve test (2e verzending → `ask`) | overgeslagen: zonder nastap staat het akkoord nog open, dus zonder gate zou een 2e bericht gewoon doorgaan |
+
+**Oorzaak.** `~/.claude/settings.local.json` wordt niet geladen als de cwd `~/Desktop` is. Ook de
+SessionStart-hook `hook-ensure-bridge.py` uit dat bestand liep niet; alleen de hooks uit
+`~/.claude/settings.json` (AMY/WIP) draaiden. Gate en nastap waren dus allebei inactief. De logica zelf
+klopt: `hash_voor` + `zoek_akkoord` vinden het akkoord voor exact deze argumenten (dry-run).
+Fix: de hookblokken naar `~/.claude/settings.json` verplaatsen, daarna test 2 herhalen incl. stap 6.
+
+**Aanpassing zelfde dag.** `window.confirm()` vervangen door een inline "Zeker? [Nee, cancel] [Ja, verstuur]"
+onder de knop (Luc: moet ook in de sideviewer werken). De iframe-blokkade (`ingelijst`, clickjacking) staat
+nog aan; die moet eruit of versmald worden voordat de knop in een ingebedde viewer werkt.
+
+**Vervolg 17:10–17:25.** Hookblokken (gate, nastap, bridge) verplaatst naar `~/.claude/settings.json`;
+`classified-guard.py` bleef in `settings.local.json`. De wijziging werd midden in de sessie opgepikt: bij de
+volgende verzending (kaart `wa-luc-test3-2026-09-26`) meldde de nastap "akkoord verbruikt (bridge)" en sprong de
+kaart vanzelf op Verstuurd. Sideviewer gemeten: Lucs klik op test 3 in de Claude Desktop-sideviewer kwam door
+(geen iframe-blokkade), dus alleen de inline-bevestiging was nodig; `frame-ancestors` niet nodig.
+Val: zonder lopende wachter gebeurt er na een klik niets. Start dus bij elke Verstuur-kaart een wachter.
+Negatieve test (gate `ask` op een tweede verzending) nog niet gedaan.

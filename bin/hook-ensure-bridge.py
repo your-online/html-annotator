@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code hook: bring the bridge up.
 
-Registered twice in ~/.claude/settings.local.json (see
+Registered twice in ~/.claude/settings.json (see
 `python -m html_annotator install-hooks`):
 
 * SessionStart — once per session, whatever route that session later uses to
