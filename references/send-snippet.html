@@ -1,0 +1,141 @@
+<!-- LA-SEND v0 (prototype) — Verstuur-knop op la-draft-kaarten.
+     Plak vóór het HTML-ANNOTATOR-blok. Werkt alleen op pagina's die via de bridge
+     (/p/...) geopend zijn: /send-approve eist Origin = de bridge.
+     Kaart-attributen (gezet door de agent die het concept schrijft):
+       data-la-send="<unieke key>"          verplicht, zet de knop aan
+       data-la-send-channel="whatsapp|mail|teams"
+       data-la-send-to="<ontvanger zoals het kanaal hem kent>"
+       data-la-send-subject="<onderwerp, alleen mail>"
+       data-la-send-session="<sessie-id van de eigenaar>"   informatief
+     De bridge verstuurt niets. Een klik legt kanaal+ontvanger+onderwerp+tekst vast met
+     een hash; elke bewerking daarna trekt het akkoord in. -->
+<style>
+  .la-send-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
+  .la-send-btn { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+    background: #1f7a4d; color: #fff; border: 1px solid #1f7a4d; }
+  .la-send-btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .la-send-btn.la-send-intrek { background: #fff; color: #7f1d1d; border-color: #e5b4b4; font-weight: 500; }
+  .la-send-status { color: #6b6b66; }
+  .la-draft.la-send-ok { border-color: #1f7a4d; box-shadow: 0 0 0 2px rgba(31,122,77,.15); }
+</style>
+<script>
+(function () {
+  "use strict";
+  var viaBridge = /^\/p\//.test(location.pathname) && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(location.origin);
+  var ingelijst = false;
+  try { ingelijst = window.top !== window.self; } catch (e) { ingelijst = true; }
+
+  function post(pad, body) {
+    return fetch(pad, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) }).then(function (r) {
+        return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error(j.error || r.status); return j; });
+      });
+  }
+  function page() { return decodeURIComponent(location.pathname.replace(/^\/p\//, "")); }
+
+  function velden(kaart, box) {
+    // Eerst de annotator zijn model laten bijwerken (anders mist de laatste toetsaanslag).
+    if (box.__bewaarNu) { try { box.__bewaarNu(); } catch (e) {} }
+    var tekst = (typeof box.__nieuw === "string") ? box.__nieuw : box.innerText;
+    return {
+      channel: kaart.getAttribute("data-la-send-channel") || "",
+      to: kaart.getAttribute("data-la-send-to") || "",
+      subject: kaart.getAttribute("data-la-send-subject") || "",
+      text: tekst.replace(/\r\n/g, "\n"),
+      html: box.__nieuwHtml || "",
+      session: kaart.getAttribute("data-la-send-session") || ""
+    };
+  }
+
+  function init(kaart) {
+    if (kaart.__laSend) return; kaart.__laSend = true;
+    var key = kaart.getAttribute("data-la-send");
+    var box = kaart.querySelector(".la-draft-txt");
+    if (!box) return;
+    var bar = document.createElement("div"); bar.className = "la-send-bar";
+    var knop = document.createElement("button"); knop.type = "button"; knop.className = "la-send-btn";
+    knop.textContent = "Verstuur";
+    var status = document.createElement("span"); status.className = "la-send-status";
+    bar.appendChild(knop); bar.appendChild(status);
+    kaart.appendChild(bar);
+    var akkoord = null; // {hash, approvalId}
+
+    if (!viaBridge || ingelijst) {
+      knop.disabled = true;
+      status.textContent = ingelijst ? "Verstuur werkt niet in een ingebedde weergave" : "open de pagina via de bridge (/p/...) om te versturen";
+      return;
+    }
+
+    function zetStatus(st) {
+      kaart.classList.toggle("la-send-ok", st === "approved");
+      if (st === "approved") {
+        knop.textContent = "Trek akkoord in"; knop.classList.add("la-send-intrek");
+        status.textContent = "Akkoord vastgelegd (" + akkoord.hash.slice(0, 8) + "). Wijzig je de tekst, dan vervalt het.";
+      } else if (st === "sent") {
+        knop.disabled = true; knop.textContent = "Verstuurd"; knop.classList.remove("la-send-intrek");
+        status.textContent = "verstuurd door de agent";
+      } else {
+        knop.disabled = false; knop.textContent = "Verstuur"; knop.classList.remove("la-send-intrek");
+        status.textContent = st === "revoked" ? "akkoord ingetrokken" : "";
+      }
+    }
+
+    function trekIn(reden) {
+      if (!akkoord) return;
+      akkoord = null; zetStatus("revoked");
+      post("/send-revoke", { page: page(), key: key, reason: reden }).catch(function (e) {
+        status.textContent = "LET OP: intrekken mislukt (" + e.message + ")";
+      });
+    }
+
+    knop.addEventListener("click", function () {
+      if (akkoord) { trekIn("ingetrokken met de knop"); return; }
+      var v = velden(kaart, box);
+      if (!v.channel || !v.to) { status.textContent = "kaart mist kanaal of ontvanger"; return; }
+      var samenvatting = "Versturen via " + v.channel + " aan " + v.to +
+        (v.subject ? "\nOnderwerp: " + v.subject : "") + "\n\n" + v.text + "\n\nDeze exacte tekst versturen?";
+      if (!window.confirm(samenvatting)) return;
+      knop.disabled = true; status.textContent = "vastleggen…";
+      post("/send-approve", { page: page(), key: key, channel: v.channel, to: v.to,
+        subject: v.subject, text: v.text, html: v.html, session: v.session })
+        .then(function (j) { akkoord = { hash: j.hash, approvalId: j.approvalId }; knop.disabled = false; zetStatus("approved"); })
+        .catch(function (e) { knop.disabled = false; status.textContent = "niet vastgelegd: " + e.message; });
+    });
+
+    // Elke wijziging na de klik trekt het akkoord in, ook als de tekst later terugkomt.
+    box.addEventListener("input", function () { trekIn("tekst gewijzigd na de klik"); });
+    kaart.addEventListener("click", function (ev) {
+      var b = ev.target.closest && ev.target.closest(".la-draft-bar button");
+      if (b && !/la-draft-diff/.test(b.className)) trekIn("opmaak of herstel na de klik");
+    }, true);
+
+    // Staat na reload terughalen.
+    post("/state", { page: page() }).then(function (j) {
+      var e = (((j.state || {}).components || {}).send || {})[key];
+      if (!e) return;
+      if (e.status === "approved") {
+        var v = velden(kaart, box);
+        // Tekst op de pagina moet nog steeds dezelfde zijn als wat goedgekeurd is.
+        if (v.text === e.text && v.to === e.to && v.channel === e.channel && (v.subject || "") === (e.subject || "")) {
+          akkoord = { hash: e.hash, approvalId: e.approvalId }; zetStatus("approved");
+        } else { akkoord = { hash: e.hash }; trekIn("pagina-tekst wijkt af van het akkoord"); }
+      } else zetStatus(e.status);
+    }).catch(function () {});
+
+    // Agent heeft verstuurd: status bijwerken zonder reload.
+    setInterval(function () {
+      if (!akkoord) return;
+      post("/state", { page: page() }).then(function (j) {
+        var e = (((j.state || {}).components || {}).send || {})[key];
+        if (e && e.status === "sent") { akkoord = null; zetStatus("sent"); }
+      }).catch(function () {});
+    }, 3000);
+  }
+
+  function start() { Array.prototype.forEach.call(document.querySelectorAll(".la-draft[data-la-send]"), init); }
+  // Na de annotator: die zet de kaartmodellen (__nieuw) op bij DOMContentLoaded.
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(start, 0); });
+  else setTimeout(start, 0);
+})();
+</script>
+<!-- /LA-SEND -->
