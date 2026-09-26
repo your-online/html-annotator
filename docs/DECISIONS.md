@@ -313,3 +313,14 @@ dat sturen. Een website kan `null` ook sturen vanuit een sandboxed iframe en
 dan de POST-routes aanroepen (niet `/p/` lezen). Chrome vraagt daarvoor
 Local Network Access-toestemming; Safari/Firefox mogelijk niet. `null` dicht
 kan zodra file://-gebruik weg is (levering via `/p/`, zie 2026-08-18).
+
+## 2026-09-26 — Verstuur-knop: klik plus confirm is akkoord, eerst alleen WhatsApp
+
+Besluit van de reviewer: een klik op Verstuur op een la-draft-kaart plus het
+bevestigingsvenster telt als akkoord op de exacte tekst en ontvanger. De controle zit
+niet in het model maar in een PreToolUse-hook die over de echte tool-argumenten hasht;
+zonder match `ask`, zodat het chatpad blijft werken. Een PostToolUse-hook verbruikt het
+akkoord na verzending. Alleen WhatsApp, omdat daar de platte-tekstprojectie van de kaart
+één op één de body is; Teams en mail versturen HTML. De ontvanger op de kaart is de
+letterlijke tool-waarde, niet een naam, want de hash zit erover. Onderzoek, tests en
+livegang: `docs/verstuur-knop-onderzoek.md`.

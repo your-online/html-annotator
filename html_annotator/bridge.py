@@ -630,6 +630,10 @@ def h_state_save(payload):
     if not key:
         raise ValueError("geef key mee")
     component = (payload.get("component") or "default").strip()
+    if component == "send":
+        # Akkoorden lopen alleen via /send-approve (Origin-check + eigen hash);
+        # /state-save heeft CORS * en mag ze dus nooit kunnen vervalsen.
+        raise ValueError("component 'send' is alleen via /send-approve te schrijven")
     p, bestand = _state_pad(payload)
     try:
         with open(p, "r", encoding="utf-8") as f:
@@ -730,10 +734,129 @@ def origin_toegestaan(origin):
     return u.scheme in ("http", "https") and naam in LOOPBACK
 
 
+# === Verstuur-knop (prototype) ============================================
+# De bridge verstuurt NOOIT zelf iets. Hij legt alleen vast welke exacte tekst de
+# reviewer met een klik heeft goedgekeurd, met een hash die de bridge zelf berekent.
+# De agent die het concept maakte wacht daarop (bin/wacht-op-verstuur.py), verifieert
+# de hash en verstuurt precies die tekst. Elke bewerking na de klik trekt het akkoord in.
+
+SEND_VELDEN = ("channel", "to", "subject", "text")
+
+# Ontvanger zoals de verzendtool hem krijgt, per kanaal. WhatsApp
+# (mcp__whatsapp__send_message, argument ``recipient``): een nummer met landcode
+# zonder + of spaties, of een JID. Een kaart met "+31 6 ..." zou nooit matchen in de
+# gate, dus die wordt bij de klik al geweigerd.
+SEND_TO = {
+    "whatsapp": re.compile(r"^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$"),
+}
+
+
+def send_canon(v):
+    """Canonieke vorm van wat er de deur uit gaat: kanaal, ontvanger, onderwerp, tekst."""
+    return json.dumps({k: (v.get(k) or "") for k in SEND_VELDEN}, sort_keys=True,
+                      ensure_ascii=False, separators=(",", ":"))
+
+
+def send_hash(v):
+    return hashlib.sha256(send_canon(v).encode("utf-8")).hexdigest()
+
+
+def _send_entry(payload):
+    key = (payload.get("key") or "").strip()
+    if not key:
+        raise ValueError("geef key mee")
+    p, bestand = _state_pad(payload)
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {"page": payload.get("page"), "pageFile": bestand, "components": {}}
+    comp = data.setdefault("components", {}).setdefault("send", {})
+    return p, data, comp, key
+
+
+def h_send_approve(payload):
+    """Legt een klik op Verstuur vast. Alleen vanuit een pagina die de bridge zelf serveert."""
+    tekst = payload.get("text") or ""
+    if not tekst.strip():
+        raise ValueError("lege tekst kan niet goedgekeurd worden")
+    if not (payload.get("channel") and payload.get("to")):
+        raise ValueError("kanaal en ontvanger zijn verplicht")
+    if payload.get("channel") not in SEND_TO:
+        # Eerst alleen WhatsApp (besluit 26-09-2026). Een klik op een mail- of
+        # Teams-kaart zou een akkoord suggereren dat de gate niet kent.
+        raise ValueError("kanaal %r heeft nog geen Verstuur-knop (alleen: %s)"
+                         % (payload.get("channel"), ", ".join(sorted(SEND_TO))))
+    vorm = SEND_TO.get(payload.get("channel"))
+    if vorm and not vorm.match(payload.get("to")):
+        raise ValueError("ontvanger %r past niet bij %s (verwacht: nummer met landcode zonder +, "
+                         "of een JID)" % (payload.get("to"), payload.get("channel")))
+    p, data, comp, key = _send_entry(payload)
+    # Waar de akkoorden vandaan komen, zodat de nastap-hook /send-done kan aanroepen
+    # zonder de pagina te kennen.
+    data["page"] = payload.get("page") or data.get("page")
+    if payload.get("pageFile") or not data.get("pageFile"):
+        data["pageFile"] = pad_van_page(payload.get("page"), payload.get("pageFile"))
+    nu = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    waarde = {k: payload.get(k) or "" for k in SEND_VELDEN}
+    h = send_hash(waarde)
+    oud = comp.get(key) or {}
+    if oud.get("status") == "sent" and oud.get("hash") == h:
+        raise ValueError("deze exacte tekst is al verstuurd")
+    entry = dict(waarde)
+    entry.update({"status": "approved", "hash": h, "approvedAt": nu, "changedAt": nu,
+                  "html": payload.get("html") or "",
+                  "session": payload.get("session") or "",
+                  "approvalId": hashlib.sha256(("%s|%s|%s" % (key, h, time.time())).encode()).hexdigest()[:16]})
+    comp[key] = entry
+    data["updatedAt"] = nu
+    schrijf(p, data)
+    return {"ok": True, "statePath": p, "key": key, "hash": h, "approvalId": entry["approvalId"]}
+
+
+def h_send_revoke(payload):
+    """Tekst gewijzigd na de klik, of de reviewer trekt in: akkoord vervalt."""
+    p, data, comp, key = _send_entry(payload)
+    entry = comp.get(key)
+    if not entry or entry.get("status") != "approved":
+        return {"ok": True, "key": key, "status": (entry or {}).get("status")}
+    nu = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    entry.update({"status": "revoked", "revokedAt": nu, "changedAt": nu,
+                  "revokeReason": (payload.get("reason") or "")[:200]})
+    data["updatedAt"] = nu
+    schrijf(p, data)
+    return {"ok": True, "key": key, "status": "revoked"}
+
+
+def h_send_done(payload):
+    """De agent meldt dat hij verstuurd heeft. Alleen met het juiste approvalId + hash."""
+    p, data, comp, key = _send_entry(payload)
+    entry = comp.get(key) or {}
+    if entry.get("status") != "approved":
+        raise ValueError("geen geldig akkoord (status: %s)" % entry.get("status"))
+    if payload.get("approvalId") != entry.get("approvalId") or payload.get("hash") != entry.get("hash"):
+        raise ValueError("approvalId/hash klopt niet met het vastgelegde akkoord")
+    nu = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    entry.update({"status": "sent", "sentAt": nu, "changedAt": nu,
+                  "sentVia": (payload.get("via") or "")[:200]})
+    data["updatedAt"] = nu
+    schrijf(p, data)
+    return {"ok": True, "key": key, "status": "sent"}
+
+
+# Welke herkomst een route eist. "page": alleen een browserpagina die de bridge zelf
+# serveert (Origin = de bridge). "local": alleen een niet-browserproces (geen Origin):
+# een browser zet op elke cross-origin POST een Origin-header, dus een website kan
+# deze routes niet aanroepen.
+HERKOMST = {"/send-approve": "page", "/send-revoke": "page", "/send-done": "local"}
+
+
 ROUTES = {"/session": h_session, "/save": h_save, "/delete": h_delete,
           "/remove-all": h_remove_all, "/resolve": h_resolve,
           "/state": h_state, "/state-save": h_state_save,
-          "/sessie": h_sessie}
+          "/sessie": h_sessie,
+          "/send-approve": h_send_approve, "/send-revoke": h_send_revoke,
+          "/send-done": h_send_done}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -842,6 +965,14 @@ class Handler(BaseHTTPRequestHandler):
         fn = ROUTES.get(pad)
         if not fn:
             return self._json(404, {"ok": False, "error": "onbekend pad"})
+        eis = HERKOMST.get(pad)
+        if eis:
+            origin = self.headers.get("Origin")
+            eigen = {"http://%s:%d" % (HOST, PORT), "http://localhost:%d" % PORT}
+            if eis == "page" and origin not in eigen:
+                return self._json(403, {"ok": False, "error": "alleen vanuit een /p/-pagina van deze bridge"})
+            if eis == "local" and origin is not None:
+                return self._json(403, {"ok": False, "error": "niet vanuit een browser"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(n) or b"{}")

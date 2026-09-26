@@ -144,6 +144,36 @@ Regels bij het gebruik:
 - Een concept in de pagina zetten is geen goedkeuring. De verzendregel uit
   CLAUDE.md en de skill `bericht-sturen` blijft onverkort gelden.
 
+### Verstuur-knop (LA-SEND, alleen WhatsApp)
+
+Een kaart kan een knop **Verstuur** krijgen. Klikt de reviewer erop en bevestigt hij,
+dan legt de bridge kanaal, ontvanger en de exacte tekst vast met een hash
+(`components.send.<key>` in `state.json`). De bridge verstuurt niets. Plak
+`references/send-snippet.html` vóór het annotator-snippet en zet op de kaart:
+
+```html
+<div class="la-draft" data-la-send="wa-nard-2026-09-26"
+     data-la-send-channel="whatsapp" data-la-send-to="31612345678">
+  <div class="la-draft-hdr"><b>WhatsApp:</b> Nard</div>
+  <div class="la-draft-txt">Hi Nard, lukt morgen om 10:00?</div>
+</div>
+```
+
+- `data-la-send-to` is **exact** de `recipient` die `mcp__whatsapp__send_message` krijgt:
+  nummer met landcode zonder + of spaties, of een JID (`@s.whatsapp.net`, `@g.us`,
+  `@lid`). De naam hoort in `la-draft-hdr`. Een ander formaat geeft een uitgeschakelde
+  knop. De balk onder de kaart toont `whatsapp → <recipient>`.
+- Elke bewerking na de klik trekt het akkoord in; de reviewer klikt dan opnieuw.
+- Wachten: `bin/wacht-op-verstuur.py --page <url> --key <key>` als achtergrondtaak. Na de
+  klik eindigt die met het akkoord en de exacte tool-argumenten (`vervolg`).
+- Versturen: één aanroep met precies die argumenten. De PreToolUse-hook
+  `bin/verstuur-gate-hook.py` laat alleen een exacte match door (anders de gewone
+  toestemmingsvraag); de PostToolUse-hook `bin/verstuur-nastap-hook.py` zet daarna de
+  status op `sent` en de kaart op "Verstuurd HH:MM". Een tweede aanroep met dezelfde tekst
+  krijgt weer de toestemmingsvraag.
+- Andere kanalen hebben (nog) geen knop. Achtergrond en livegang:
+  `docs/verstuur-knop-onderzoek.md`.
+
 ## Deel 7: geneste subpunten (`la-sub`)
 
 Heeft een punt subtaken, dan wil de reviewer die visueel onder hun ouder zien hangen: hoe
