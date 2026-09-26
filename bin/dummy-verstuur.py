@@ -1,57 +1,55 @@
 #!/usr/bin/env python3
-"""Dummy-kanaal voor het prototype: 'verstuurt' naar een logbestand, nooit naar buiten.
+"""Dummy-kanaal: speelt een mcp__whatsapp__send_message-aanroep na zoals Claude Code hem
+doet, maar 'verstuurt' naar een logbestand. Er gaat nooit iets naar buiten.
 
-Doet vlak voor verzending wat een echte verzendstap ook moet doen:
-1. akkoord opnieuw ophalen (niet uit het geheugen van de wachter);
-2. status moet nog 'approved' zijn en approvalId/hash moeten gelijk zijn aan wat de
-   agent denkt te versturen (dus niet ingetrokken of vervangen sinds de klik);
-3. hash opnieuw berekenen over de velden die daadwerkelijk verstuurd worden;
-4. pas dan versturen, en /send-done melden.
+1. PreToolUse: bin/verstuur-gate-hook.py met het tool-event. Alleen bij "allow" gaat
+   het door; "ask" betekent in het echt: Claude Code vraagt de reviewer om toestemming.
+   De dummy stopt dan (exit 10), want er is hier niemand om te antwoorden.
+2. "Versturen": één JSON-regel in --log.
+3. PostToolUse: bin/verstuur-nastap-hook.py met een geslaagd tool-resultaat
+   ({"success": true}, zoals de WhatsApp-MCP antwoordt), of --faal voor success false.
+
+Uitvoer: JSON met de beslissing van de gate en de melding van de nastap.
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, json, os, subprocess, sys, time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from html_annotator.bridge import send_hash  # noqa: E402
+BIN = os.path.dirname(os.path.abspath(__file__))
+TOOL = "mcp__whatsapp__send_message"
 
 
-def post(base, pad, body):
-    req = urllib.request.Request(base + pad, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        return json.load(e)
+def hook(naam, ev):
+    r = subprocess.run([sys.executable, os.path.join(BIN, naam)], input=json.dumps(ev),
+                       capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        sys.exit("hook %s faalde (%d): %s" % (naam, r.returncode, r.stderr.strip()))
+    return json.loads(r.stdout) if r.stdout.strip() else {}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--page", required=True)
-    ap.add_argument("--key", required=True)
-    ap.add_argument("--approval-id", required=True)
-    ap.add_argument("--hash", required=True)
-    ap.add_argument("--text-file", required=True, help="de tekst die de agent gaat versturen")
-    ap.add_argument("--to", required=True)
-    ap.add_argument("--channel", required=True)
-    ap.add_argument("--subject", default="")
+    ap.add_argument("--to", required=True, help="recipient zoals de tool hem krijgt")
+    ap.add_argument("--text-file", required=True)
     ap.add_argument("--log", required=True)
-    ap.add_argument("--bridge", default="http://127.0.0.1:%s" % os.environ.get("HTML_ANNOTATOR_PORT", "8791"))
+    ap.add_argument("--faal", action="store_true", help="tool meldt success false")
     a = ap.parse_args()
     tekst = open(a.text_file, encoding="utf-8").read()
-    e = ((post(a.bridge, "/state", {"page": a.page})["state"].get("components") or {}).get("send") or {}).get(a.key) or {}
-    if e.get("status") != "approved":
-        sys.exit("GEWEIGERD: geen geldig akkoord (status %s)" % e.get("status"))
-    if e.get("approvalId") != a.approval_id or e.get("hash") != a.hash:
-        sys.exit("GEWEIGERD: akkoord is vervangen sinds de wachter het zag")
-    teversturen = {"channel": a.channel, "to": a.to, "subject": a.subject, "text": tekst}
-    if send_hash(teversturen) != e["hash"]:
-        sys.exit("GEWEIGERD: wat je wilt versturen wijkt af van de goedgekeurde tekst")
+    ev = {"hook_event_name": "PreToolUse", "tool_name": TOOL,
+          "tool_input": {"recipient": a.to, "message": tekst}}
+    pre = hook("verstuur-gate-hook.py", ev).get("hookSpecificOutput", {})
+    uit = {"gate": pre.get("permissionDecision"), "gateReden": pre.get("permissionDecisionReason")}
+    if pre.get("permissionDecision") != "allow":
+        print(json.dumps(uit, ensure_ascii=False))
+        return 10
     with open(a.log, "a", encoding="utf-8") as f:
-        f.write(json.dumps(dict(teversturen, at=time.strftime("%H:%M:%S")), ensure_ascii=False) + "\n")
-    r = post(a.bridge, "/send-done", {"page": a.page, "key": a.key, "approvalId": a.approval_id,
-                                      "hash": a.hash, "via": "dummy:" + a.log})
-    print(json.dumps({"verstuurd": True, "bridge": r}, ensure_ascii=False))
+        f.write(json.dumps({"to": a.to, "text": tekst, "at": time.strftime("%H:%M:%S")},
+                           ensure_ascii=False) + "\n")
+    ev.update({"hook_event_name": "PostToolUse",
+               "tool_response": {"success": not a.faal, "message": "dummy"}})
+    post = hook("verstuur-nastap-hook.py", ev).get("hookSpecificOutput", {})
+    uit.update({"verstuurd": True, "nastap": post.get("additionalContext")})
+    print(json.dumps(uit, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

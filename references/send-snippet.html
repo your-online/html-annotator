@@ -1,14 +1,18 @@
-<!-- LA-SEND v0 (prototype) — Verstuur-knop op la-draft-kaarten.
+<!-- LA-SEND v1 — Verstuur-knop op la-draft-kaarten (eerst alleen WhatsApp).
      Plak vóór het HTML-ANNOTATOR-blok. Werkt alleen op pagina's die via de bridge
      (/p/...) geopend zijn: /send-approve eist Origin = de bridge.
      Kaart-attributen (gezet door de agent die het concept schrijft):
        data-la-send="<unieke key>"          verplicht, zet de knop aan
-       data-la-send-channel="whatsapp|mail|teams"
-       data-la-send-to="<ontvanger zoals het kanaal hem kent>"
-       data-la-send-subject="<onderwerp, alleen mail>"
+       data-la-send-channel="whatsapp"      ander kanaal: knop uit (nog geen gate)
+       data-la-send-to="<recipient>"        EXACT de waarde die de verzendtool krijgt.
+                                            WhatsApp: nummer met landcode zonder + of
+                                            spaties (31612345678), of een JID
+                                            (31612345678@s.whatsapp.net, 1203...@g.us).
+                                            Niet de naam: die staat in la-draft-hdr.
        data-la-send-session="<sessie-id van de eigenaar>"   informatief
-     De bridge verstuurt niets. Een klik legt kanaal+ontvanger+onderwerp+tekst vast met
-     een hash; elke bewerking daarna trekt het akkoord in. -->
+     De balk onder de kaart toont de exacte ontvangerwaarde, zodat de reviewer ziet
+     waarheen het gaat. De bridge verstuurt niets. Een klik legt kanaal+ontvanger+tekst
+     vast met een hash; elke bewerking daarna trekt het akkoord in. -->
 <style>
   .la-send-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
   .la-send-btn { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer;
@@ -16,6 +20,8 @@
   .la-send-btn[disabled] { opacity: .45; cursor: not-allowed; }
   .la-send-btn.la-send-intrek { background: #fff; color: #7f1d1d; border-color: #e5b4b4; font-weight: 500; }
   .la-send-status { color: #6b6b66; }
+  .la-send-doel { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #4a4a45; }
+  .la-draft.la-send-sent { opacity: .8; }
   .la-draft.la-send-ok { border-color: #1f7a4d; box-shadow: 0 0 0 2px rgba(31,122,77,.15); }
 </style>
 <script>
@@ -31,7 +37,11 @@
         return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error(j.error || r.status); return j; });
       });
   }
-  function page() { return decodeURIComponent(location.pathname.replace(/^\/p\//, "")); }
+  // Zelfde paginasleutel als de checklist en de annotator: de volledige URL. De
+  // bridge leidt daar het bestand en de slug van af.
+  function page() { return location.href.split("#")[0]; }
+  var ONTVANGER = { whatsapp: /^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$/ };
+  function tijd(iso) { var m = /T(\d\d:\d\d)/.exec(iso || ""); return m ? m[1] : ""; }
 
   function velden(kaart, box) {
     // Eerst de annotator zijn model laten bijwerken (anders mist de laatste toetsaanslag).
@@ -59,21 +69,29 @@
     bar.appendChild(knop); bar.appendChild(status);
     kaart.appendChild(bar);
     var akkoord = null; // {hash, approvalId}
+    var kanaal = kaart.getAttribute("data-la-send-channel") || "";
+    var naar = kaart.getAttribute("data-la-send-to") || "";
+    var doel = document.createElement("span"); doel.className = "la-send-doel";
+    doel.textContent = kanaal + " → " + naar;
+    bar.insertBefore(doel, status);
 
-    if (!viaBridge || ingelijst) {
-      knop.disabled = true;
-      status.textContent = ingelijst ? "Verstuur werkt niet in een ingebedde weergave" : "open de pagina via de bridge (/p/...) om te versturen";
-      return;
-    }
+    var weiger = !viaBridge ? "open de pagina via de bridge (/p/...) om te versturen"
+      : ingelijst ? "Verstuur werkt niet in een ingebedde weergave"
+      : !ONTVANGER[kanaal] ? "Verstuur-knop bestaat nog niet voor kanaal '" + kanaal + "'"
+      : !ONTVANGER[kanaal].test(naar) ? "ontvanger '" + naar + "' is geen geldige " + kanaal + "-recipient"
+      : "";
+    if (weiger) { knop.disabled = true; status.textContent = weiger; return; }
 
-    function zetStatus(st) {
+    function zetStatus(st, e) {
       kaart.classList.toggle("la-send-ok", st === "approved");
       if (st === "approved") {
         knop.textContent = "Trek akkoord in"; knop.classList.add("la-send-intrek");
         status.textContent = "Akkoord vastgelegd (" + akkoord.hash.slice(0, 8) + "). Wijzig je de tekst, dan vervalt het.";
       } else if (st === "sent") {
-        knop.disabled = true; knop.textContent = "Verstuurd"; knop.classList.remove("la-send-intrek");
-        status.textContent = "verstuurd door de agent";
+        knop.disabled = true; knop.classList.remove("la-send-intrek");
+        knop.textContent = "Verstuurd " + tijd(e && e.sentAt);
+        status.textContent = "";
+        kaart.classList.add("la-send-sent");
       } else {
         knop.disabled = false; knop.textContent = "Verstuur"; knop.classList.remove("la-send-intrek");
         status.textContent = st === "revoked" ? "akkoord ingetrokken" : "";
@@ -119,7 +137,7 @@
         if (v.text === e.text && v.to === e.to && v.channel === e.channel && (v.subject || "") === (e.subject || "")) {
           akkoord = { hash: e.hash, approvalId: e.approvalId }; zetStatus("approved");
         } else { akkoord = { hash: e.hash }; trekIn("pagina-tekst wijkt af van het akkoord"); }
-      } else zetStatus(e.status);
+      } else zetStatus(e.status, e);
     }).catch(function () {});
 
     // Agent heeft verstuurd: status bijwerken zonder reload.
@@ -127,7 +145,7 @@
       if (!akkoord) return;
       post("/state", { page: page() }).then(function (j) {
         var e = (((j.state || {}).components || {}).send || {})[key];
-        if (e && e.status === "sent") { akkoord = null; zetStatus("sent"); }
+        if (e && e.status === "sent") { akkoord = null; zetStatus("sent", e); }
       }).catch(function () {});
     }, 3000);
   }

@@ -288,3 +288,14 @@ CSS gebeurt (`input:checked ~ tabel`) verandert geen attribuut en levert dus
 geen hertekening op; dat staat als voorwaarde in het handboek. Een periodieke
 sanity-render zou dat dekken, maar kost stroom op elke pagina en is voor de
 KPI-pagina's (die `classList.toggle` gebruiken) niet nodig.
+
+## 2026-09-26 — Verstuur-knop: klik plus confirm is akkoord, eerst alleen WhatsApp
+
+Besluit van de reviewer: een klik op Verstuur op een la-draft-kaart plus het
+bevestigingsvenster telt als akkoord op de exacte tekst en ontvanger. De controle zit
+niet in het model maar in een PreToolUse-hook die over de echte tool-argumenten hasht;
+zonder match `ask`, zodat het chatpad blijft werken. Een PostToolUse-hook verbruikt het
+akkoord na verzending. Alleen WhatsApp, omdat daar de platte-tekstprojectie van de kaart
+één op één de body is; Teams en mail versturen HTML. De ontvanger op de kaart is de
+letterlijke tool-waarde, niet een naam, want de hash zit erover. Onderzoek, tests en
+livegang: `docs/verstuur-knop-onderzoek.md`.

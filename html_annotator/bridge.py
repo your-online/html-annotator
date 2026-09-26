@@ -700,6 +700,14 @@ def h_sessie(payload):
 
 SEND_VELDEN = ("channel", "to", "subject", "text")
 
+# Ontvanger zoals de verzendtool hem krijgt, per kanaal. WhatsApp
+# (mcp__whatsapp__send_message, argument ``recipient``): een nummer met landcode
+# zonder + of spaties, of een JID. Een kaart met "+31 6 ..." zou nooit matchen in de
+# gate, dus die wordt bij de klik al geweigerd.
+SEND_TO = {
+    "whatsapp": re.compile(r"^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$"),
+}
+
 
 def send_canon(v):
     """Canonieke vorm van wat er de deur uit gaat: kanaal, ontvanger, onderwerp, tekst."""
@@ -732,7 +740,21 @@ def h_send_approve(payload):
         raise ValueError("lege tekst kan niet goedgekeurd worden")
     if not (payload.get("channel") and payload.get("to")):
         raise ValueError("kanaal en ontvanger zijn verplicht")
+    if payload.get("channel") not in SEND_TO:
+        # Eerst alleen WhatsApp (besluit 26-09-2026). Een klik op een mail- of
+        # Teams-kaart zou een akkoord suggereren dat de gate niet kent.
+        raise ValueError("kanaal %r heeft nog geen Verstuur-knop (alleen: %s)"
+                         % (payload.get("channel"), ", ".join(sorted(SEND_TO))))
+    vorm = SEND_TO.get(payload.get("channel"))
+    if vorm and not vorm.match(payload.get("to")):
+        raise ValueError("ontvanger %r past niet bij %s (verwacht: nummer met landcode zonder +, "
+                         "of een JID)" % (payload.get("to"), payload.get("channel")))
     p, data, comp, key = _send_entry(payload)
+    # Waar de akkoorden vandaan komen, zodat de nastap-hook /send-done kan aanroepen
+    # zonder de pagina te kennen.
+    data["page"] = payload.get("page") or data.get("page")
+    if payload.get("pageFile") or not data.get("pageFile"):
+        data["pageFile"] = pad_van_page(payload.get("page"), payload.get("pageFile"))
     nu = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     waarde = {k: payload.get(k) or "" for k in SEND_VELDEN}
     h = send_hash(waarde)
