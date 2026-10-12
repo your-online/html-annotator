@@ -53,18 +53,20 @@ origin is 204. CORS echoes the allowed origin, never `*` (see B30).
 
 </details>
 
-<details><summary><strong>B2 — <code>/p/</code> serves only pages and static assets under home, without CORS.</strong></summary>
+<details><summary><strong>B2 — <code>/p/</code> serves only pages and static assets under the pages root, without CORS.</strong></summary>
 
 *TESTED · platform: all*
 
-*Expected behaviour:* a path that leaves the home directory is 403. So is
+*Expected behaviour:* a path that leaves the pages root (the home
+directory unless configured otherwise, B34) is 403. So is
 any dotfile or dot-directory (`/p/.zshrc`, `.env`, `~/.ssh/…`), also when
 reached through a symlink, and any extension outside html/htm, css, js,
 png/jpg/jpeg/gif/svg/webp and json. `/p/` responses carry no
 `Access-Control-*` headers: the page is same-origin with the bridge, and
 another site must not be able to read what `/p/` returns.
 
-*Evidence:* `tests/test_bridge_contract.py` · `tests/mutate-contract.sh`.
+*Evidence:* `tests/test_bridge_contract.py` · `tests/mutate-contract.sh` ·
+`tests/test_poort_config.py` (same rules under a configured root).
 
 </details>
 
@@ -177,17 +179,21 @@ Bash writes; the matcher is not widened to every Bash call.
 
 </details>
 
-<details><summary><strong>B12 — <code>ensure</code> does not lie.</strong></summary>
+<details><summary><strong>B12 — <code>ensure</code> does not lie and does not move.</strong></summary>
 
-*TESTED · platform: posix*
+*TESTED · platform: all (Python case), posix (case-03, case-19)*
 
-*Expected behaviour:* given port 8791 held by a non-bridge,
-`python -m html_annotator ensure` ends with a live answering bridge or a
-non-zero exit — never exit 0 while `/ping` is empty. A stale pid file is
-removed. A second `ensure` says "already running" and starts nothing;
-`stop` takes down what `ensure` started.
+*Expected behaviour:* given the configured port (8791 by default) held
+by a non-bridge, `python -m html_annotator ensure` exits 1 with a message
+that names the port and says to run `pick-port`. It never exits 0 while
+`/ping` is empty, never starts a bridge on another port, and leaves the
+occupier alone. A bridge that is still starting on that port counts as
+the bridge (ensure waits for its `/ping`). A stale pid file is removed. A
+second `ensure` says "already running" and starts nothing; `stop` takes
+down what `ensure` started.
 
-*Evidence:* `tests/case-03-ensure-bridge-eerlijk.sh`.
+*Evidence:* `tests/case-03-ensure-bridge-eerlijk.sh` ·
+`tests/test_poort_config.py` · `tests/case-19-dynamische-poort.mjs`.
 
 *Gap:* no contract mutation.
 
@@ -272,11 +278,16 @@ default `tests/run.sh`.
 
 *TESTED · platform: posix*
 
-*Expected behaviour:* when the bridge is not on 8791, the snippet still
-posts to the port that served `/p/`.
+*Expected behaviour:* when the bridge is not on 8791, the annotator
+snippet and the checklist snippet both post to the origin that served
+`/p/`, so an annotation and a checkbox land on disk. Opened as `file://`
+they fall back to `http://127.0.0.1:8791` (best effort; Chrome blocks
+that through Private Network Access). The send snippet uses relative
+URLs and needs no origin.
 
 *Evidence:* `tests/case-08-locator-tabel.mjs` (requires `HTML_ANNOTATOR_PORT`)
-· `tests/mutate-contract.sh`.
+· `tests/case-19-dynamische-poort.mjs` (port chosen by `pick-port`,
+annotation and checkbox on disk) · `tests/mutate-contract.sh`.
 
 </details>
 
@@ -366,6 +377,171 @@ send `null` from a sandboxed iframe.
 
 </details>
 
+<details><summary><strong>B31 — One config file per user; environment wins.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* port, bind address and pages root come from the
+environment (`HTML_ANNOTATOR_PORT` or the `LUC_ANNOTATOR_PORT` alias,
+`HTML_ANNOTATOR_HOST`, `HTML_ANNOTATOR_PAGES_ROOT`), then from
+`config.json` in `$XDG_CONFIG_HOME/html-annotator/` (`~/.config`, or
+`%APPDATA%` on Windows), then from the defaults 8791, 127.0.0.1 and home.
+Without a file and without env the behaviour is unchanged. A broken file
+gives the defaults plus a warning on stderr, never a crash. Writing the
+file keeps other keys and leaves no tmp behind. `base_url()` uses
+127.0.0.1 whatever the bind address is.
+
+*Evidence:* `tests/test_poort_config.py`. Decision in `docs/DECISIONS.md`
+(2026-10-12).
+
+</details>
+
+<details><summary><strong>B32 — <code>pick-port</code> stores a working port; ensure, url and pages follow it.</strong></summary>
+
+*TESTED · platform: all (Python case), posix (case-19)*
+
+*Expected behaviour:* without `--port`, `pick-port` keeps the configured
+port when this bridge answers there; otherwise it tries 8791–8890 in
+order by binding each on the configured bind address and releasing it,
+and the first port that is free or already runs this bridge wins. All
+taken: a port from the OS. It writes `port` to the config file (other
+keys kept) and prints the port and the base URL. `--port N` stores N
+after checking 1–65535 and only warns when a non-bridge listens there.
+After that `ensure`, `url`, `url --base`, `status` and `stop` use the new
+port without any environment variable, and a `/p/` page served there
+saves annotations and checkboxes to disk.
+
+*Evidence:* `tests/test_poort_config.py` (taken range via an internal
+test hook, own occupier) · `tests/case-19-dynamische-poort.mjs`. Neither
+touches a bridge on 8791.
+
+*Gap:* the real 8791–8890 range is not exercised in tests, only a test
+range with the same code path.
+
+</details>
+
+<details><summary><strong>B33 — The bind address is opt-in; URLs and origin checks stay on loopback.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* `HTML_ANNOTATOR_HOST=0.0.0.0` (or `host` in the
+config file) makes the bridge bind there and log a `WARNING` that names
+the address. `/ping` via 127.0.0.1 answers, `url` and `url --base` still
+print 127.0.0.1, a `/p/` page is served, and a POST from the bridge's own
+origin (`http://127.0.0.1:<port>`) is accepted, including the routes that
+demand the bridge's own page. A non-loopback `Host` header stays 403
+(B30).
+
+*Evidence:* `tests/test_poort_config.py`. Docker/WSL itself is not in
+the suite.
+
+</details>
+
+<details><summary><strong>B34 — The pages root is configurable and keeps the <code>/p/</code> rules.</strong></summary>
+
+*TESTED · platform: all (symlink checks skip where symlinks cannot be made)*
+
+*Expected behaviour:* with `HTML_ANNOTATOR_PAGES_ROOT` (or `pages_root`
+in the config file) `/p/<path>` is relative to that directory: a page
+inside is 200, a path that leaves it is 403, dotfiles and dot-directories
+are 403, also through a symlink, and only the B2 file types are served.
+`url` maps against the same root: inside it prints the path from the
+root, outside it or under a dot-path it exits 1 with a message, no
+traceback. A `/save` from a `/p/` page finds the file under the root
+(content hash from the file, not the DOM).
+
+*Evidence:* `tests/test_poort_config.py`.
+
+</details>
+
+<details><summary><strong>B35 — <code>pick-port</code> never overwrites a broken config file.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* when the config file exists but cannot be read, is
+not valid JSON or is not a JSON object, `pick-port` (with or without
+`--port`) exits non-zero, leaves the file byte for byte as it was, and
+prints on stderr which file it is, what is wrong with it, and that the
+user should repair or remove it. No traceback. Reading for the bridge
+stays lenient (B31).
+
+*Evidence:* `tests/test_poort_config.py`.
+
+</details>
+
+<details><summary><strong>B36 — Concurrent config writes lose no keys.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* 20 processes that each write a different key to the
+config file at the same time leave all 20 keys in the file. Read-modify-
+write runs under an exclusive lock on `config.json.lock` next to the file
+(`fcntl.flock` on POSIX, `msvcrt.locking` on Windows); the write itself
+stays atomic.
+
+*Evidence:* `tests/test_poort_config.py` (fails without the lock).
+
+</details>
+
+<details><summary><strong>B37 — Concurrent <code>ensure</code> starts one bridge, and the pid file names it.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* three `ensure` runs started at the same time on a
+free configured port all exit 0 and exactly one reports "started". The
+pid file holds the pid that answers `/ping` (which returns `pid`), and
+`stop` then really stops that bridge. `ensure` runs under a per-port lock
+in the state dir; the pid file is written only after the spawned process
+is the one answering.
+
+*Evidence:* `tests/test_poort_config.py` (fails without the lock and the
+pid check).
+
+</details>
+
+<details><summary><strong>B38 — A bridge with the pre-rename name still counts as ours.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* a process on the configured port that answers
+`/ping` with `"bridge": "luc-annotator"` makes `ensure` say "already" (exit
+0), not "taken"; `pick-port` treats that port as one where the bridge
+already runs.
+
+*Evidence:* `tests/test_poort_config.py`.
+
+</details>
+
+<details><summary><strong>B39 — Only the bridge's own <code>/p/</code> URLs map a page through the pages root.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* the bridge derives the page file from `/p/<path>`
+only for `http(s)` URLs on a loopback host at its own port. A `file://`
+page with `/p/` in its path, and a `/p/` URL on another port, are linked
+to their own `pageFile`, not to a same-named file under the pages root.
+
+*Evidence:* `tests/test_poort_config.py`.
+
+</details>
+
+<details><summary><strong>B40 — The signed group message exception is configuration, and off by default.</strong></summary>
+
+*TESTED · platform: all*
+
+*Expected behaviour:* without the config key `signed_group_message` the
+send gate has no exception. With it, `mcp__whatsapp__send_message` to
+exactly the configured `jid` is allowed only when
+`<module>.toegestaan(tool_name, tool_input)`, loaded from the configured
+`verifier` path, returns `True`. Another recipient, another tool, a text
+the verifier rejects, a verifier that raises or cannot be imported, or an
+incomplete key: the normal gate (`ask` without a button approval).
+
+*Evidence:* `tests/test_verstuur.py` (V11), with an invented group and a
+throwaway verifier module.
+
+</details>
+
 <details><summary><strong>B23 — Region and text boxes scroll with the HTML they mark, including inside an <code>overflow:auto</code> scroller.</strong></summary>
 
 *TESTED · platform: posix*
@@ -451,7 +627,7 @@ behaviour: the deprecated page-global alias, `LUC-ANNOTATOR` markers,
 
 *TESTED · platform: posix (full suite), all (Python cases)*
 
-*Evidence:* `tests/run.sh` (default: 00 02–04 06 08–09 11–12 14–17).
+*Evidence:* `tests/run.sh` (default: 00 02–04 06 08–09 11–12 14–19).
 `00 09 11` run without a browser and are the three-OS CI set. The suite
 header prints `git rev-parse --short HEAD` and a dirty-tree count.
 
@@ -529,7 +705,7 @@ fails.
 ## Seams
 
 Tests only touch these edges: the bridge HTTP API, the CLI
-(`python -m html_annotator show / apply-hunk / ensure / install-*`), the
+(`python -m html_annotator show / apply-hunk / ensure / url / pick-port / install-*`), the
 snippet via Playwright (cases 02/06/08/12/14–17), and the repo layout
 (root contents, `bin/`, the two install commands).
 
@@ -541,7 +717,8 @@ No tests against internal helpers, no snapshots of whole JSON dumps.
    `CHANGELOG.md` has an entry for it.
 1. `python -m compileall -q html_annotator bin`
 2. `python tests/test_record.py test_bridge_contract.py test_toon.py
-   test_layout.py` — all four green, on the three-OS matrix.
+   test_poort_config.py test_layout.py` — all five green, on the three-OS
+   matrix.
 3. `python -m html_annotator ensure` starts a detached bridge, a second
    call says "already running", `stop` takes it down again.
 4. `install-hooks` registers `bin/hook-ensure-bridge.py` twice and no

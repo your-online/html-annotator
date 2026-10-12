@@ -2,8 +2,12 @@
 """Wacht tot de reviewer op Verstuur klikt op een la-draft-kaart.
 
 Draai dit als achtergrondtaak (run_in_background) in de sessie die het concept maakte:
-    python3 bin/wacht-op-verstuur.py --page http://127.0.0.1:8791/p/Desktop/x.html --key wa-nard
-(--page mag ook het bestandspad zijn: ~/Desktop/x.html.)
+    python3 bin/wacht-op-verstuur.py --page http://127.0.0.1:8791/p/Desktop/x.html --key wa-sam
+(--page mag ook het bestandspad zijn: ~/Desktop/x.html. De /p/-URL geeft
+`python -m html_annotator url <bestand>`.)
+
+--bridge is standaard de origin van --page als dat een http-URL is, anders de
+base-url uit de config (`python -m html_annotator url --base`).
 
 Zodra de klik binnen is (status "approved", hash klopt) print het script het akkoord
 als JSON en stopt: de achtergrondtaak eindigt en de sessie wordt wakker met dit als
@@ -15,18 +19,25 @@ de hash klopt; de PostToolUse-nastap verbruikt het akkoord. Het script verstuurt
 
 Exitcodes: 0 akkoord, 1 timeout, 2 hash klopt niet, 3 al verstuurd.
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, json, os, sys, time, urllib.parse, urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from html_annotator.bridge import send_hash  # noqa: E402  (zelfde canonieke hash)
-
-TOOL = {"whatsapp": ("mcp__whatsapp__send_message", "recipient", "message")}
+from html_annotator import config, verstuur  # noqa: E402
 
 
 def pagina(page):
     if "/p/" in page or page.startswith("file://"):
         return {"page": page}
     return {"pageFile": os.path.abspath(os.path.expanduser(page))}
+
+
+def bridge_van(page):
+    """Origin van een http-/p/-URL, anders de geconfigureerde base-url."""
+    u = urllib.parse.urlsplit(page)
+    if u.scheme in ("http", "https") and u.netloc:
+        return "%s://%s" % (u.scheme, u.netloc)
+    return config.base_url()
 
 
 def state(base, page):
@@ -36,13 +47,15 @@ def state(base, page):
         return json.load(r)["state"]
 
 
+REGEL = ("exact deze argumenten, één keer; niets aan de tekst, ontvangers of afzender "
+         "veranderen. Vraagt Claude Code alsnog om toestemming, dan klopt er iets niet: stop en meld het.")
+
+
 def vervolg(e):
-    t = TOOL.get(e.get("channel"))
-    if not t:
-        return "kanaal %r heeft geen Verstuur-gate: vraag de reviewer in de chat" % e.get("channel")
-    return {"tool": t[0], "arguments": {t[1]: e.get("to"), t[2]: e.get("text")},
-            "regel": "exact deze argumenten, één keer; niets aan de tekst veranderen. "
-                     "Vraagt Claude Code alsnog om toestemming, dan klopt er iets niet: stop en meld het."}
+    v = verstuur.vervolg(e)
+    if isinstance(v, dict):
+        v["regel"] = REGEL
+    return v
 
 
 def main():
@@ -50,8 +63,10 @@ def main():
     ap.add_argument("--page", required=True, help="/p/-URL of bestandspad van de pagina")
     ap.add_argument("--key", required=True, help="waarde van data-la-send op de kaart")
     ap.add_argument("--timeout", type=int, default=3600)
-    ap.add_argument("--bridge", default="http://127.0.0.1:%s" % os.environ.get("HTML_ANNOTATOR_PORT", "8791"))
+    ap.add_argument("--bridge", default=None,
+                    help="standaard: origin van --page, anders `url --base`")
     a = ap.parse_args()
+    a.bridge = a.bridge or bridge_van(a.page)
     eind = time.time() + a.timeout
     while time.time() < eind:
         try:
@@ -67,7 +82,8 @@ def main():
                 print(json.dumps({"ok": False, "fout": "hash klopt niet met de vastgelegde velden"}))
                 return 2
             print(json.dumps({"ok": True, "akkoord": {k: e.get(k) for k in
-                  ("channel", "to", "subject", "text", "hash", "approvalId", "approvedAt")},
+                  ("channel", "account", "to", "cc", "bcc", "subject", "reply", "text", "hash",
+                   "approvalId", "approvedAt") if k in ("channel", "to", "text", "hash") or e.get(k)},
                   "vervolg": vervolg(e)}, ensure_ascii=False, indent=1))
             return 0
         time.sleep(1)

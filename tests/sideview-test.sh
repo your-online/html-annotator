@@ -8,7 +8,7 @@
 #   1. probe-pagina opnieuw bouwen op ~/Desktop/sideview-probe.html
 #   2. de bridge omlaag halen, zodat de pagina met "bridge uit" begint — dat is de enige
 #      manier om zelfherstel te kunnen zien
-#   3. wachten tot Luc die pagina in de sideviewer heeft geopend (default 45s)
+#   3. wachten tot de reviewer die pagina in de sideviewer heeft geopend (default 45s)
 #   4. de bridge omhoog brengen en meekijken of de pagina vanzelf bijkomt
 #   5. afdrukken wat de probe over zichzelf gemeld heeft
 #
@@ -66,13 +66,13 @@ echo
 if [ $UITSLAG -eq 2 ]; then
   cat <<'EOF'
 CONCLUSIE ONVOLLEDIG. De pagina heeft de bridge niet bereikt. Twee mogelijkheden, en
-alleen Luc kan ze uit elkaar houden:
+alleen de reviewer kan ze uit elkaar houden:
 
   a. de sideviewer draait op een origin die loopback niet mag benaderen — dan staat er
      op de pagina een rood blok met de reden;
   b. de pagina is niet (op tijd) geopend — dan staat er niets bijzonders op het scherm.
 
-Vraag Luc om op "Kopieer diagnose" te klikken en dat in de chat te plakken.
+Vraag de reviewer om op "Kopieer diagnose" te klikken en dat in de chat te plakken.
 EOF
 else
   echo "Klaar. Kijk bij 'zelfherstel' hierboven: True betekent dat de pil vanzelf omsloeg,"

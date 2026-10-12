@@ -21,7 +21,7 @@ Niet doen:
 - `ensure-bridge.sh` / `hook-ensure-bridge.sh` / `annotator-bridge.py`
   verplaatsen (hooks en alerts blijven op root-paden)
 - `~/Desktop/annotaties` als default wijzigen
-- vijf persoonlijke memories wissen — die gaan naar `extras/luc-memories/`
+- vijf persoonlijke memories wissen — die gaan naar een map met persoonlijke memories buiten de repo
   en worden niet meer geïnstalleerd
 
 ## Fase 0 — freeze
@@ -45,7 +45,7 @@ Niet doen:
    `html-annotator-standaard.md`, `punt-verwerk-annotaties.md`,
    `annotator-bridge-autostart.md`, `MEMORY-index-regels.md` (alleen die
    drie bullets).
-7. Verplaats de vijf overige memories naar `extras/luc-memories/` + korte
+7. Verplaats de vijf overige memories naar een map met persoonlijke memories buiten de repo + korte
    README daar: niet deel van de skill-install.
 8. `install.sh` kopieert alleen de drie annotator-memories. Bestaande
    bestanden in een project-memory niet overschrijven (al zo).
@@ -87,5 +87,5 @@ Niet doen:
 
 ## Stopcondities
 
-Stop en vraag Luc als een stap het paste-blok, poort 8791, `/p/`-gedrag,
+Stop en vraag de eigenaar als een stap het paste-blok, poort 8791, `/p/`-gedrag,
 poller, of UI-copy zou moeten veranderen om “schoon” te worden.

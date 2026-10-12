@@ -1,12 +1,16 @@
 #!/bin/bash
 # Runner voor de annotator-bridge-suite.
 #
-#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–18
+#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–19
 #                               (geen case-01 spend, geen mutate)
 #   tests/run.sh 00 09 11       # de drie cases zonder browser (ook de CI-set)
 #   tests/run.sh 02 03          # alleen deze cases
 #   tests/run.sh 01 10          # verse-agent + mutatie, expliciet
 #   CASE01_RUNS=1 tests/run.sh 01
+#   HTML_ANNOTATOR_PORT=<vrij> tests/run.sh
+#                               # alles tegen een testpoort: 02–04 en 06/12/14–17
+#                               # stoppen en starten de bridge op $PORT, dus draai ze
+#                               # nooit op 8791 als daar een bridge in gebruik is
 #
 # Uitgangspunten die deze runner bewust hardmaakt:
 # - Een case die niet kón draaien (exit 2) is geen pass. Hij wordt als BLOKKED geteld
@@ -23,7 +27,7 @@ CASE01_RUNS="${CASE01_RUNS:-3}"
 GEVRAAGD=("$@")
 # Default = wat A7 van iedereen eist. case-01 (spend) en case-10 (mutatie,
 # bewust traag + eigen boom) alleen als je ze noemt.
-DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18"
+DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18 19"
 wil() {
   if [ ${#GEVRAAGD[@]} -eq 0 ]; then
     for g in $DEFAULT; do [ "$g" = "$1" ] && return 0; done
@@ -59,6 +63,9 @@ if wil 09 || wil contract; then
   [ $? -ne 0 ] && FALEN=$((FALEN + 1))
   echo "case-09b: show B8–B9"
   python3 ./test_toon.py
+  [ $? -ne 0 ] && FALEN=$((FALEN + 1))
+  echo "case-09c: configbestand, pick-port, bind-adres, pagina-root (B12, B31–B34)"
+  python3 ./test_poort_config.py
   [ $? -ne 0 ] && FALEN=$((FALEN + 1))
   echo
 fi
@@ -186,14 +193,31 @@ fi
 
 if wil 18 || wil verstuur; then
   # Eigen bridge op een vrije poort, tijdelijke root; raakt de live bridge niet.
-  echo "case-18: Verstuur-knop (WhatsApp) — gate, nastap, wachter, dummy-kanaal"
+  echo "case-18: Verstuur-knop (WhatsApp en mail) — gate, nastap, wachter, dummy-kanaal"
   python3 ./test_verstuur.py
+  [ $? -ne 0 ] && FALEN=$((FALEN + 1))
+  python3 ./test_verstuur_mail.py
   [ $? -ne 0 ] && FALEN=$((FALEN + 1))
   if [ ! -d node_modules/playwright-core ]; then
     echo "BLOKKED case-18 (browser): playwright-core ontbreekt"
     BLOKKED=$((BLOKKED + 1))
   else
     node ./case-18-verstuur-knop.mjs
+    rc=$?
+    [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))
+    [ $rc -eq 1 ] && FALEN=$((FALEN + 1))
+  fi
+  echo
+fi
+
+if wil 19; then
+  # Eigen testreeks, eigen bezetter, tijdelijke config/state/root; raakt 8791 niet.
+  echo "case-19: andere poort via pick-port, end-to-end in de browser"
+  if [ ! -d node_modules/playwright-core ]; then
+    echo "BLOKKED case-19: playwright-core ontbreekt"
+    BLOKKED=$((BLOKKED + 1))
+  else
+    node ./case-19-dynamische-poort.mjs
     rc=$?
     [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))
     [ $rc -eq 1 ] && FALEN=$((FALEN + 1))

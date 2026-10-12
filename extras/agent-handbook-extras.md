@@ -9,29 +9,21 @@ inside `references/annotator-snippet.html` — the snippet stays one paste
 block — so a page that uses them keeps working. Only the documentation and
 their Playwright cases moved here. See `docs/SCOPE.md`.
 
-The todo-list script `bin/vind-todolijst.sh` was deleted, not moved: it was
-pure personal glue. The part below still refers to it.
+A personal todo-list finder script was deleted, not moved: it was pure
+personal glue.
 
 ## Deel 5: taken spawnen vanaf de todolijst
 
 Vraagt de reviewer om een taak te spawnen (`spawn_task`), dan hangt die altijd aan een punt op
 zijn HTML-todolijst, en het nummer van dat punt hoort in de sessietitel. De volledige
-conventie staat in de skill **`task-spawnen`** — lees die voordat je spawnt; hier staat
+conventie staat in een eigen skill voor het spawnen van taken — lees die voordat je spawnt; hier staat
 alleen wat je moet weten om er te komen.
 
 **Zoek de lijst, onthoud hem niet.** Het bestand verhuist en wordt hernoemd, dus nooit
-een pad uit je hoofd of uit een eerder gesprek:
+een pad uit je hoofd of uit een eerder gesprek. Weet je niet zeker welk bestand het is,
+verzin er dan geen: vraag het de reviewer.
 
-```bash
-~/.claude/skills/html-annotator/bin/vind-todolijst.sh        # pad
-~/.claude/skills/html-annotator/bin/vind-todolijst.sh -v     # met hoogste nummer erbij
-```
-
-Het script kiest de meest recent gewijzigde HTML op het bureaublad die genummerde punten
-heeft (`<span class="num">`) én zich als todolijst laat herkennen. Vindt hij niets, dan
-verzin je er geen: vraag het de reviewer.
-
-Daarna, in het kort — de details en de reden erachter staan in `task-spawnen`:
+Daarna, in het kort — de details en de reden erachter staan in die skill:
 
 1. Zoek het punt waar de taak bij hoort en pak zijn nummer. Bestaat het nog niet, maak
    het dan eerst aan op de lijst, met een nummer dat één hoger is dan het hoogste in het
@@ -41,6 +33,10 @@ Daarna, in het kort — de details en de reden erachter staan in `task-spawnen`:
    naar `[DONE]-<titel>`.
 
 ## Deel 6: de concept-berichtkaart
+
+> **Regel (05-10-2026):** mail- en WhatsApp-concepten krijgen altijd de Verstuur-knop
+> (zie `SKILL.md`, "Draft message card"). Het voorbeeld hieronder zonder `data-la-send`
+> en met rich text geldt alleen nog voor Teams en voor tekst die niet verstuurd wordt.
 
 Een conceptbericht (mail, Teams, WhatsApp) dat nog niet verstuurd is, hoort niet
 als platte tekst in de chat maar als kaart in de HTML. Dan kan de reviewer de tekst zien
@@ -141,21 +137,21 @@ Regels bij het gebruik:
   welke vraag beantwoord moet worden, of wat er gebeurt zodra het verstuurd is.
 - De concepten staan bovenaan de pagina, met een lead-regel die duidelijk maakt
   dat er nog niets verstuurd is.
-- Een concept in de pagina zetten is geen goedkeuring. De verzendregel uit
-  CLAUDE.md en de skill `bericht-sturen` blijft onverkort gelden.
+- Een concept in de pagina zetten is geen goedkeuring. De verzendregels van de
+  eigenaar (bijv. in CLAUDE.md of een berichtenskill) blijven onverkort gelden.
 
-### Verstuur-knop (LA-SEND, alleen WhatsApp)
+### Verstuur-knop (LA-SEND, WhatsApp en mail, verplicht)
 
-Een kaart kan een knop **Verstuur** krijgen. Klikt de reviewer erop en bevestigt hij,
+Een kaart kan een knop **Verstuur** krijgen. Klikt de reviewer erop en bevestigt die,
 dan legt de bridge kanaal, ontvanger en de exacte tekst vast met een hash
 (`components.send.<key>` in `state.json`). De bridge verstuurt niets. Plak
 `references/send-snippet.html` vóór het annotator-snippet en zet op de kaart:
 
 ```html
-<div class="la-draft" data-la-send="wa-nard-2026-09-26"
+<div class="la-draft" data-la-send="wa-sam-2026-09-26"
      data-la-send-channel="whatsapp" data-la-send-to="31612345678">
-  <div class="la-draft-hdr"><b>WhatsApp:</b> Nard</div>
-  <div class="la-draft-txt">Hi Nard, lukt morgen om 10:00?</div>
+  <div class="la-draft-hdr"><b>WhatsApp:</b> Sam</div>
+  <div class="la-draft-txt">Hi Sam, lukt morgen om 10:00?</div>
 </div>
 ```
 

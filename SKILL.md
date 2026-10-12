@@ -7,7 +7,9 @@ description: >
   trigger when processing feedback: a bare "." (period only),
   "process my feedback", or a path to annotations.json / an annotation
   round — then this skill describes how to read and process rounds and
-  screenshot crops.
+  screenshot crops. Every draft message (mail, WhatsApp) on a page is a
+  la-draft card WITH the Verstuur (send) button — never the plain card,
+  whichever skill asked for the page (a messaging or meeting-recap skill, …).
 ---
 
 # HTML annotator: embed + process feedback
@@ -76,6 +78,11 @@ state directory, and waits until it answers (max 5 seconds). Never skip
 this: without the bridge, feedback lands in localStorage and nothing is
 on disk.
 
+If `ensure` exits 1 with "port N is taken by something that is not the
+bridge", run `python -m html_annotator pick-port` once (it stores a free
+port in the per-user config file) and `ensure` again. `ensure` never moves
+to another port on its own.
+
 **Safety net, two layers.** Both run `bin/hook-ensure-bridge.py` from
 this skill, registered in `~/.claude/settings.json` by
 `python -m html_annotator install-hooks`:
@@ -107,23 +114,27 @@ gaps: (1) the fresh-agent case is BLOCKED; (2) the hidden-panel
 variant emulates `document.hidden`, not Chrome throttling.
 
 **Always open the page through the bridge, never via `file://` or a
-preview pane.** The bridge serves local files on `GET /p/<path-from-home>`:
+preview pane.** The bridge serves local files on
+`GET /p/<path-from-pages-root>`. **Never build that URL yourself**; ask
+the CLI:
 
-```
-~/Desktop/todos.html
-→ http://127.0.0.1:8791/p/Desktop/todos.html
+```bash
+python -m html_annotator url ~/Desktop/plan.html
+# http://127.0.0.1:8791/p/Desktop/plan.html   (8791 is the default port)
 ```
 
-Build: absolute path, strip the home directory, put the rest after
-`http://127.0.0.1:8791/p/` with forward slashes, on every OS. Paths
-outside home → 403. `python -m html_annotator url <file>` does this for
-you.
+The port differs per machine (`pick-port`), and the path after `/p/` is
+relative to the pages root, which is the home directory unless
+`HTML_ANNOTATOR_PAGES_ROOT` or the config file says otherwise. A file
+outside the pages root, or under a dotfile or dot-directory, is refused:
+`url` exits 1 with the reason, and the bridge answers 403.
+`python -m html_annotator url --base` prints only the base URL (for
+`curl`).
 
 **Hand the URL to the reviewer as a clickable markdown link**
-(`[title](http://127.0.0.1:8791/p/…)`), never inside backticks or a code
+(`[title](<what url printed>)`), never inside backticks or a code
 block: a code block forces copy-paste, a link opens with one click
-(decision 2026-09-15). `python -m html_annotator url <file>` prints the
-link. A preview pane
+(decision 2026-09-15). A preview pane
 as `data:` can never reach loopback (Private Network Access). Via
 `/p/` the page is same-origin with the bridge.
 
@@ -175,6 +186,76 @@ popup (chips included) for "do it differently". Decisions land via
 Processing on `.`: accepted → keep and strip markers, rejected → restore the
 original, change → apply the comment; then mark the key `processed`.
 Full rules: handbook part 6.
+
+### Draft message card (LA-DRAFT): always the Send-button version
+
+Any draft mail or WhatsApp message on a page is a `.la-draft` card **with
+the Verstuur button**. There is no "plain" variant for these channels:
+a card without `data-la-send` is a bug, also on a first draft, also when
+the calling skill (a messaging, recap or report skill, …) shows an
+older example without it. This rule wins over such examples. Teams has no
+button yet; only there the plain card plus "verstuur" in chat stays.
+
+Every time, in this order:
+
+1. Card attributes: `data-la-send="<mail|wa>-<name>-<date>"` (unique),
+   `data-la-send-channel="mail"` or `"whatsapp"`, `data-la-send-to`
+   (addresses only, comma-separated; WhatsApp: number/JID), and for mail
+   `data-la-send-account` (sender account) plus either
+   `data-la-send-reply="<verified messageId>"` or
+   `data-la-send-subject="…"`. Optional `-cc`/`-bcc`. Names go in
+   `la-draft-hdr`, not in the attributes.
+2. Text in `la-draft-txt` as plain text: `<p>` per paragraph, `<br>` for
+   line breaks, bullets as `•`/`◦` characters. No `<ul>/<li>/<a>/<b>`: the
+   button sends `innerText`, formatting and links are dropped. Links for
+   the reviewer go in `la-draft-na`.
+3. Paste `references/send-snippet.html` **before** the annotator snippet.
+4. Start the watcher in the same turn, in the background:
+   `python3 bin/wacht-op-verstuur.py --page <p-url> --key <data-la-send>`.
+   New watcher after every text change.
+5. Before handing over the URL, grep the file for `data-la-send=`,
+   `data-la-send-to=` (mail: also `data-la-send-account=`) and the
+   send snippet. Missing one: fix first.
+
+After the click, and what never goes through the button (attachments,
+reply-all): the send instructions of the calling messaging skill.
+Card styling and tracked changes: `extras/agent-handbook-extras.md` part 6.
+
+## Agenda-preview (meeting voorstellen)
+
+Every meeting **with invitees** the reviewer wants scheduled starts as a
+calendar preview, before any invite exists: a Notion-Calendar-style week
+view with the proposals highlighted between the reviewer's existing events.
+The reviewer iterates through annotations; nothing is sent until they say "verstuur" on
+time, title and invitees.
+
+1. Fetch each calendar with `get-calendar-view`, `timezone="Europe/Amsterdam"`,
+   `select="id,subject,start,end,isAllDay,showAs,attendees,organizer,bodyPreview,location,isCancelled"`:
+   one call per account, with the MCP server that belongs to it (see
+   `mail_servers` in the config file). Large results land in `tool-results/`; use
+   that path. An inline result: write the JSON to the scratchpad first.
+2. Write an overlay JSON: `heading`, optional `subheading`, `proposals`
+   (`nr, title, start, end, invitees, toelichting, status open|verstuurd|vervallen, notitie`)
+   and optional `tags` (`{"<exact title>": "nieuw"}`). Keep it next to
+   the page, so the next round only edits this file.
+3. Build and render:
+   ```bash
+   python3 bin/agenda-spec.py --cal werk:Werk:purple:<werk.json> \
+     --cal prive:Privé:orange:<prive.json> --start <monday> --weeks 3 \
+     --overlay <page>.voorstellen.json -o <scratch>/spec.json
+   python3 bin/agenda-preview.py <scratch>/spec.json -o <page>.html
+   ```
+   The renderer embeds the annotator snippet itself; then `ensure` the
+   bridge and hand over the `/p/` URL.
+
+What the page does: "Busy." sync copies that mirror an event in another
+calendar (±1 min) are dropped, the rest show as "Busy (sync copy)";
+blocks of 3 h or more sit in a narrow lane on the left of the day with the
+title vertical at the top, overlapping events move beside them; click any
+block for a popover (time, duration, calendar, organizer, invitees with
+responses, body; for proposals the status, toelichting and notitie).
+After sending, set `status: "verstuurd"` and re-render: the proposal turns
+green and picks up the real invitees and their responses.
 
 ## Processing (short port)
 

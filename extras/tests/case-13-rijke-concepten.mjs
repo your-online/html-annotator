@@ -33,7 +33,7 @@ const pagina = `<!doctype html><meta charset="utf-8"><title>${slug}</title>
 <h2>Mail-concepten</h2>
 <div class="la-draft">
   <div class="la-draft-hdr"><b>Aan:</b> Alex Jansen &nbsp;·&nbsp; <b>Onderwerp:</b> Security</div>
-  <div class="la-draft-txt"><p>Hi Alex,</p><p>Korte recap van ons gesprek net:</p><ul><li>Alex: schiet het <b>issue</b> in bij <a href="https://example.org/pbi/1234">PBI 1234</a></li><li>Luc: stuurt de opzet door</li></ul><p>Groet,<br>Luc</p></div>
+  <div class="la-draft-txt"><p>Hi Alex,</p><p>Korte recap van ons gesprek net:</p><ul><li>Alex: schiet het <b>issue</b> in bij <a href="https://example.org/pbi/1234">PBI 1234</a></li><li>Sam: stuurt de opzet door</li></ul><p>Groet,<br>Sam</p></div>
   <div class="la-draft-na">Nog niet verstuurd.</div>
 </div>
 ${readFileSync(join(SKILL, 'references', 'annotator-snippet.html'), 'utf8')}`;
@@ -72,7 +72,7 @@ await page.evaluate(() => {
   const box = document.querySelector('.la-draft-txt');
   box.focus();
   const li = box.querySelectorAll('li')[1];
-  li.textContent = 'Luc: stuurt de opzet vrijdag door';
+  li.textContent = 'Sam: stuurt de opzet vrijdag door';
   box.dispatchEvent(new Event('input', { bubbles: true }));
 });
 await page.evaluate(() => document.querySelector('.la-draft-txt').blur());
@@ -121,10 +121,10 @@ const PLAT = `Hi Alex,
 Twee dingen:
 
 Alex: schiet het issue in
-Luc: stuurt de opzet door
+Sam: stuurt de opzet door
 
 Groet,
-Luc`;
+Sam`;
 writeFileSync(bestand2, `<!doctype html><meta charset="utf-8"><title>${slug2}</title>
 <div class="la-draft">
   <div class="la-draft-hdr"><b>Aan:</b> Alex &nbsp;·&nbsp; <b>Onderwerp:</b> Twee dingen</div>
@@ -144,7 +144,7 @@ const start2 = await page2.evaluate(() => {
 zeg(!start2.rijk && start2.ce === 'plaintext-only',
   `een platte kaart blijft plat tot de reviewer opmaak aanzet (${start2.ce})`);
 
-// Luc selecteert de twee owner-regels en maakt er een echte opsomming van
+// De reviewer selecteert de twee owner-regels en maakt er een echte opsomming van
 await page2.evaluate(() => {
   const box = document.querySelector('.la-draft-txt');
   box.focus();

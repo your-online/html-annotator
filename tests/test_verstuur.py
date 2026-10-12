@@ -24,7 +24,65 @@ from test_bridge_contract import check, http, start_bridge, vrije_poort  # noqa:
 
 BIN = os.path.join(SKILL, "bin")
 NR = "31600000001"
-TEKST = "Hi Nard, kun je morgen om 10:00?\nGroet"
+TEKST = "Hi Sam, kun je morgen om 10:00?\nGroet"
+GROEP = "120363000000000000@g.us"
+
+
+def ondertekend_groepsbericht():
+    """V11: de optionele uitzondering ``signed_group_message`` met een verzonnen groep en
+    een eigen verifier-module in een tijdelijke map. Eigen configmap; de rest van de
+    test merkt er niets van."""
+    n = 0
+    cfg = tempfile.mkdtemp(prefix="ann-cfg-")
+    ver = tempfile.mkdtemp(prefix="ann-verifier-")
+    os.makedirs(os.path.join(ver, "voorbeeldverifier"))
+    open(os.path.join(ver, "voorbeeldverifier", "__init__.py"), "w").close()
+    with open(os.path.join(ver, "voorbeeldverifier", "groep.py"), "w", encoding="utf-8") as f:
+        f.write("def toegestaan(tool, invoer):\n"
+                "    if invoer.get('message') == 'boem':\n"
+                "        raise RuntimeError('kapot')\n"
+                "    return invoer.get('message') == 'ondertekend bericht'\n")
+    oud = {k: os.environ.get(k) for k in ("XDG_CONFIG_HOME", "APPDATA")}
+    os.environ["XDG_CONFIG_HOME"] = os.environ["APPDATA"] = cfg
+    pad = os.path.join(cfg, "html-annotator", "config.json")
+    os.makedirs(os.path.dirname(pad))
+
+    def zet(waarde):
+        with open(pad, "w", encoding="utf-8") as f:
+            json.dump({} if waarde is None else {"signed_group_message": waarde}, f)
+
+    volledig = {"jid": GROEP, "verifier": ver, "module": "voorbeeldverifier.groep",
+                "label": "voorbeeld-groepsbericht"}
+    try:
+        zet(None)
+        n += check("V11 zonder signed_group_message: gewone gate (ask)",
+                   gate(GROEP, "ondertekend bericht") == "ask")
+        zet(volledig)
+        r = hook("verstuur-gate-hook.py", {"tool_name": "mcp__whatsapp__send_message",
+                 "tool_input": {"recipient": GROEP, "message": "ondertekend bericht"}})
+        n += check("V11 ondertekend bericht naar de geconfigureerde groep: allow met label",
+                   r.get("permissionDecision") == "allow"
+                   and "voorbeeld-groepsbericht" in r.get("permissionDecisionReason", ""))
+        n += check("V11 niet ondertekende tekst: ask", gate(GROEP, "iets anders") == "ask")
+        n += check("V11 verifier gooit een fout: ask", gate(GROEP, "boem") == "ask")
+        n += check("V11 andere ontvanger met ondertekende tekst: ask",
+                   gate("120363000000000001@g.us", "ondertekend bericht") == "ask")
+        r = hook("verstuur-gate-hook.py", {"tool_name": "mcp__ms365__send-mail",
+                 "tool_input": {"recipient": GROEP, "message": "ondertekend bericht"}})
+        n += check("V11 andere tool: geen uitzondering", r.get("permissionDecision") != "allow")
+        zet(dict(volledig, module="bestaat.niet"))
+        n += check("V11 verifier-module niet te laden: ask", gate(GROEP, "ondertekend bericht") == "ask")
+        zet({k: v for k, v in volledig.items() if k != "jid"})
+        n += check("V11 sleutel zonder jid: ask", gate(GROEP, "ondertekend bericht") == "ask")
+    finally:
+        for k, v in oud.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(cfg, ignore_errors=True)
+        shutil.rmtree(ver, ignore_errors=True)
+    return n
 
 
 def stop(proc):
@@ -114,8 +172,8 @@ def main():
         # --- ontvangerformaat en kanaal ---------------------------------------------
         code, j = approve("wa-x", to="+31 6 00000001")
         n += check("V2 ontvanger met + en spaties geweigerd bij de klik", code == 400)
-        code, _ = approve("wa-x", channel="mail", to="a@b.nl")
-        n += check("V2 kanaal mail heeft nog geen knop: geweigerd", code == 400)
+        code, _ = approve("wa-x", channel="mail", to="a@example.com")
+        n += check("V2 mailkaart zonder afzenderaccount: geweigerd", code == 400)
         code, _ = approve("wa-jid", to=NR + "@s.whatsapp.net", text="jid-variant")
         n += check("V2 JID als ontvanger toegestaan", code == 200)
 
@@ -184,6 +242,8 @@ def main():
                            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
                            capture_output=True, text=True)
         n += check("V10 gate zwijgt bij een andere tool", r.returncode == 0 and r.stdout.strip() == "")
+
+        n += ondertekend_groepsbericht()
     finally:
         stop(proc)
         os.remove(bestand)

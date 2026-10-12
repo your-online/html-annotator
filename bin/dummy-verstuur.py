@@ -9,6 +9,9 @@ doet, maar 'verstuurt' naar een logbestand. Er gaat nooit iets naar buiten.
 3. PostToolUse: bin/verstuur-nastap-hook.py met een geslaagd tool-resultaat
    ({"success": true}, zoals de WhatsApp-MCP antwoordt), of --faal voor success false.
 
+Generiek (mail): --tool <toolnaam> --input-file <tool_input.json> speelt die aanroep
+na in plaats van de WhatsApp-aanroep.
+
 Uitvoer: JSON met de beslissing van de gate en de melding van de nastap.
 """
 import argparse, json, os, subprocess, sys, time
@@ -27,21 +30,25 @@ def hook(naam, ev):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--to", required=True, help="recipient zoals de tool hem krijgt")
-    ap.add_argument("--text-file", required=True)
+    ap.add_argument("--to", help="WhatsApp: recipient zoals de tool hem krijgt")
+    ap.add_argument("--text-file", help="WhatsApp: berichttekst")
+    ap.add_argument("--tool", default=TOOL, help="generiek: toolnaam")
+    ap.add_argument("--input-file", help="generiek: tool_input als JSON")
     ap.add_argument("--log", required=True)
     ap.add_argument("--faal", action="store_true", help="tool meldt success false")
     a = ap.parse_args()
-    tekst = open(a.text_file, encoding="utf-8").read()
-    ev = {"hook_event_name": "PreToolUse", "tool_name": TOOL,
-          "tool_input": {"recipient": a.to, "message": tekst}}
+    if a.input_file:
+        invoer = json.load(open(a.input_file, encoding="utf-8"))
+    else:
+        invoer = {"recipient": a.to, "message": open(a.text_file, encoding="utf-8").read()}
+    ev = {"hook_event_name": "PreToolUse", "tool_name": a.tool, "tool_input": invoer}
     pre = hook("verstuur-gate-hook.py", ev).get("hookSpecificOutput", {})
     uit = {"gate": pre.get("permissionDecision"), "gateReden": pre.get("permissionDecisionReason")}
     if pre.get("permissionDecision") != "allow":
         print(json.dumps(uit, ensure_ascii=False))
         return 10
     with open(a.log, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"to": a.to, "text": tekst, "at": time.strftime("%H:%M:%S")},
+        f.write(json.dumps({"tool": a.tool, "input": invoer, "at": time.strftime("%H:%M:%S")},
                            ensure_ascii=False) + "\n")
     ev.update({"hook_event_name": "PostToolUse",
                "tool_response": {"success": not a.faal, "message": "dummy"}})

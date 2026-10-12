@@ -1,4 +1,4 @@
-<!-- HTML-ANNOTATOR v3 · standard feedback component; paste this block at the bottom of every HTML page (before </body> or at the end of the file). Self-contained, no dependencies. Writes through the local bridge (python -m html_annotator serve, 127.0.0.1:8791) to <annotation-root>/<slug>/ronde-NN/. Older pages carry the LUC-ANNOTATOR v1/v2 marker; the bridge and the hooks still recognise those. -->
+<!-- HTML-ANNOTATOR v3 · standard feedback component; paste this block at the bottom of every HTML page (before </body> or at the end of the file). Self-contained, no dependencies. Writes through the local bridge (python -m html_annotator serve, 127.0.0.1:8791 by default) to <annotation-root>/<slug>/ronde-NN/. Older pages carry the LUC-ANNOTATOR v1/v2 marker; the bridge and the hooks still recognise those. -->
 <style>
   /* CSS-seams: bar/status · overlay/ghost · badges · weeslijst · selknop
      · popup/refs · draft · sessie · la-sub. Geen bundler; één blok. */
@@ -135,7 +135,7 @@
   .la-draft-hdr b { color: var(--ink, #1c1c1a); }
   .la-draft-txt { font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; white-space: pre-wrap; }
   /* Knop die een verse Claude Code-sessie opent met de context van dit punt.
-     Zie de skill nieuwe-sessie. */
+     Bedoeld voor een sessie-start-skill. */
   .la-sessie { display: inline-block; margin-top: 2px; font-size: 12px; text-decoration: none;
     padding: 4px 9px; border-radius: 6px; border: 1px solid rgba(0,0,0,.1); background: #fff;
     color: #3a3a3a; }
@@ -212,6 +212,8 @@
    regio-snip · tekstselectie · draft/hunks · HtmlAnnotator · sessie-links */
 (function () {
   "use strict";
+  /* Via /p/ is de bridge de eigen origin, op welke poort ook. file:// valt terug op
+     de standaardpoort (best effort: Chrome blokkeert file:// naar loopback toch al). */
   var BRIDGE = (location.protocol.indexOf("http") === 0 && location.pathname.indexOf("/p/") === 0)
     ? (location.protocol + "//" + location.host)
     : "http://127.0.0.1:8791";
@@ -228,7 +230,7 @@
     if (location.protocol === "file:") {
       try { return decodeURIComponent(location.pathname); } catch (e) { return location.pathname; }
     }
-    /* via de bridge geserveerd: http://127.0.0.1:8791/p/<pad-vanaf-home> */
+    /* via de bridge geserveerd: http://127.0.0.1:<poort>/p/<pad-vanaf-pagina-root> */
     var m = location.pathname.match(/^\/p\/(.+)$/);
     if (m && (location.hostname === "127.0.0.1" || location.hostname === "localhost")) {
       try { return "~/" + decodeURIComponent(m[1]); } catch (e) { return "~/" + m[1]; }

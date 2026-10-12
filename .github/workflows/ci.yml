@@ -33,6 +33,7 @@ jobs:
           python tests/test_record.py
           python tests/test_bridge_contract.py
           python tests/test_toon.py
+          python tests/test_poort_config.py
           python tests/test_layout.py
 
       - name: Packaging (pip install + console script)
@@ -119,7 +120,7 @@ jobs:
       - name: Install playwright-core
         run: cd tests && npm i --no-save playwright-core
       - name: Run suite
-        run: tests/run.sh 00 09 11 02 06 08 12 14 15 16 17
+        run: tests/run.sh 00 09 11 02 06 08 12 14 15 16 17 19
 
       - name: Stop bridge
         if: always()

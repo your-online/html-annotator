@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PostToolUse-nastap voor verzendtools (Verstuur-knop, eerst alleen WhatsApp).
+"""PostToolUse-nastap voor verzendtools (Verstuur-knop: WhatsApp en mail).
 
 Na een geslaagde verzending wordt het bijbehorende akkoord verbruikt: status "sent"
 via /send-done. Daarmee laat de gate (verstuur-gate-hook.py) dezelfde tekst niet nog
@@ -67,7 +67,7 @@ def main():
     ev = json.load(sys.stdin)
     tool = ev.get("tool_name", "")
     h = verstuur.hash_voor(tool, ev.get("tool_input"))
-    if h is None:
+    if h is None or h.startswith("ongeldig"):
         sys.exit(0)
     gevonden = verstuur.zoek_akkoord(h)
     if not gevonden:

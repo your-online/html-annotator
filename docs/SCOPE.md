@@ -32,14 +32,13 @@ mechanics, not one person's workflow.
 
 | what | why it is not core |
 |---|---|
-| `agent-handbook-extras.md` part 5 — spawning tasks from an HTML todo list | depends on the author's todo list, its numbering convention and a `task-spawnen` skill that is not in this repo |
-| part 6 — the draft message card (`la-draft`), tracked changes | a workflow for reviewing unsent messages; useful, but not what "annotate an HTML page" means, and it drags in a second skill (`bericht-sturen`) |
+| `agent-handbook-extras.md` part 5 — spawning tasks from an HTML todo list | depends on the author's todo list, its numbering convention and a task-spawning skill that is not in this repo |
+| part 6 — the draft message card (`la-draft`), tracked changes | a workflow for reviewing unsent messages; useful, but not what "annotate an HTML page" means, and it drags in a second skill (a messaging skill) |
 | part 7 — nested sub-points (`la-sub`) | visual convention of one todo list |
 | `tests/case-05`, `case-07`, `case-13` | they only cover those extras |
 | `docs/refactor-plan-fase-0-2.md`, `docs/reviews/` | dated history of an earlier pass |
 
-Deleted rather than moved: `bin/vind-todolijst.sh` (finds the author's
-todo list on his Desktop — pure personal glue), and the todo-list tail
+Deleted rather than moved: a personal todo-list finder script, and the todo-list tail
 of the work rule printed by `show`.
 
 **The snippet was not cut.** `la-draft` and `la-sub` keep their CSS and

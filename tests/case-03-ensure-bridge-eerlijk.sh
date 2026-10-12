@@ -3,8 +3,12 @@
 # antwoordt. Aanleiding: bridge.log bevat "OSError: [Errno 48] Address already in use"
 # tracebacks terwijl bridge-hook.log op dezelfde momenten succes meldt.
 #
-# Opzet: poort 8791 bezetten met een luisteraar die géén bridge is, en kijken wat het
-# script dan doet. Het mag falen; het mag niet liegen.
+# Opzet: de poort ($PORT, standaard 8791) bezetten met een luisteraar die géén bridge
+# is, en kijken wat het script dan doet. Het moet falen, met een verwijzing naar
+# pick-port, en mag nooit stil naar een andere poort uitwijken (CRITERIA.md B12).
+#
+# LET OP: bridge_down stopt wat er op $PORT luistert. Draai deze case tegen een
+# testpoort (HTML_ANNOTATOR_PORT=<vrij>) als er een live bridge op 8791 staat.
 
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -41,7 +45,7 @@ if [ "$(bridge_pid)" != "$BEZETTER" ]; then
   exit 2
 fi
 
-(cd "$SKILL_DIR" && python3 -m html_annotator ensure) >/dev/null 2>&1
+MELDING=$(cd "$SKILL_DIR" && python3 -m html_annotator ensure 2>&1 >/dev/null)
 EXIT_CODE=$?
 ANTWOORD=$(ping_bridge)
 
@@ -59,6 +63,12 @@ elif [ "$EXIT_CODE" -eq 0 ]; then
   RC=1
 else
   pass "exit $EXIT_CODE, bezetter leeft, ping is geen html-annotator (lsof: $(bridge_pid))"
+fi
+if echo "$MELDING" | grep -q "pick-port"; then
+  pass "melding verwijst naar pick-port"
+else
+  fail "melding noemt pick-port niet: ${MELDING:-leeg}"
+  RC=1
 fi
 
 exit $RC

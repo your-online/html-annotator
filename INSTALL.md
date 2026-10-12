@@ -15,6 +15,7 @@ As a package (recommended — nothing to clone, the CLI lands on your PATH):
 pipx install git+https://github.com/your-online/html-annotator
 html-annotator install-skill
 html-annotator install-hooks
+html-annotator pick-port
 ```
 
 `pip install html-annotator` works too, and `pip install "html-annotator[crops]"`
@@ -28,13 +29,14 @@ git clone https://github.com/your-online/html-annotator ~/repos/html-annotator
 cd ~/repos/html-annotator
 python -m html_annotator install-skill      # --copy on Windows
 python -m html_annotator install-hooks
+python -m html_annotator pick-port
 ```
 
 `html-annotator <command>` and `python -m html_annotator <command>` are the
 same entry point; the rest of this file uses the second form because it also
 works straight from a checkout.
 
-Both install commands are idempotent. Still do step 3 and step 4 by hand.
+All three commands are idempotent. Still do step 3 and step 4 by hand.
 
 Agent rules live in `SKILL.md` and `references/`. No memories are copied.
 
@@ -86,6 +88,32 @@ the machine, including sessions that never touch annotations. That is on
 purpose: one ping per session. If the owner wants it narrower, that is their
 call — do not narrow it unasked.
 
+## Step 2b — choose the port
+
+```bash
+python -m html_annotator pick-port             # search and store
+python -m html_annotator pick-port --port 8800 # store this one
+```
+
+Nothing to configure by hand. `pick-port` tries 8791–8890 by actually binding
+each port on the configured bind address and releasing it again; the first
+free port wins. A port where this bridge already answers counts as good, so on
+a machine that already runs the bridge it keeps that port. When the whole
+range is taken, the OS hands out a port. The choice is written as `port` into
+the per-user config file (other keys stay), and the command prints the port and
+the base URL. Run it after installing and whenever `ensure` reports that the
+port is taken by something that is not the bridge: `ensure` never moves to
+another port on its own.
+
+**For an agent doing the install:** if `pick-port` fails, find a free port
+yourself (any port nothing listens on) and store it with
+`python -m html_annotator pick-port --port N`. Never edit URLs or snippets to
+match a port: `python -m html_annotator url <file>` and `url --base` always
+print the right one.
+
+With `--port N` the port is validated (1–65535) and stored without a search;
+it only warns when something other than the bridge listens there.
+
 ## Step 3 — deliver rule in the global instructions
 
 The strongest trigger is not in the skill but in the global instructions. Put
@@ -132,11 +160,41 @@ Save. There should now be an `annotations.json` plus a crop under
 
 ## Configuration
 
-| variable | meaning | default |
-|---|---|---|
-| `HTML_ANNOTATOR_PORT` | port of the bridge | `8791` |
-| `HTML_ANNOTATOR_ROOT` | where rounds are written | `~/annotations` |
-| `HTML_ANNOTATOR_CHROME` | browser used for crops | auto-detected |
+Precedence, highest first: environment variable > per-user config file >
+default.
+
+| variable | config key | meaning | default |
+|---|---|---|---|
+| `HTML_ANNOTATOR_PORT` | `port` | port of the bridge | `8791` |
+| `HTML_ANNOTATOR_HOST` | `host` | address the bridge binds to | `127.0.0.1` |
+| `HTML_ANNOTATOR_PAGES_ROOT` | `pages_root` | directory `/p/` serves pages from | home directory |
+| `HTML_ANNOTATOR_ROOT` | – | where rounds are written | `~/annotations` |
+| – | `mail_servers` | sender account → MCP server for the Send button, e.g. `{"you@example.com": "ms365"}` | none (mail cards then fall back to asking in chat) |
+| – | `signed_group_message` | optional send-gate exception for one WhatsApp group whose messages an external verifier signs: `{"jid": "120363000000000000@g.us", "verifier": "~/path/to/verifier-repo", "module": "package.module", "label": "example signed message"}` (see `docs/verstuur-knop-onderzoek.md`) | none (no exception: the normal gate) |
+| `HTML_ANNOTATOR_CHROME` | – | browser used for crops | auto-detected |
+
+The config file is `~/.config/html-annotator/config.json`
+(`$XDG_CONFIG_HOME/html-annotator/config.json` if that is set,
+`%APPDATA%\html-annotator\config.json` on Windows), for example
+`{"port": 8792}`. `pick-port` writes it; all keys are optional. A broken or
+unreadable file is ignored with a warning on stderr, so the bridge still
+starts on the defaults. `pick-port` never overwrites such a file: it exits
+with an error naming the file and the problem; repair or remove it yourself.
+Writes are serialised with a lock file next to it (`config.json.lock`), so
+concurrent writers do not lose each other's keys.
+
+`HTML_ANNOTATOR_HOST` only changes where the socket listens. The URLs the CLI
+prints, the `/ping` check and the origins the bridge accepts stay on
+127.0.0.1/localhost at the bridge's own port. Any address other than loopback
+makes the bridge log a `WARNING`, because the port is then reachable from the
+network unless a firewall or a port mapping stops it. Only set it for a
+container (see Docker below).
+
+`HTML_ANNOTATOR_PAGES_ROOT` moves what `/p/` serves: the path after `/p/` is
+relative to that directory, and the existing rules hold relative to it —
+nothing outside it, no dotfile or dot-directory (also not through a symlink),
+only html/htm, css, js, images and json. `python -m html_annotator url <file>`
+maps against the same root, so a link it prints always opens.
 
 The `LUC_ANNOTATOR_PORT`, `LUC_ANNOTATOR_ROOT` and `LUC_ANNOTATOR_CHROME`
 names are **deprecated aliases**. They are still read, so a running setup does
@@ -186,13 +244,14 @@ delete them automatically — they are project rules.
   either, region annotations store without a crop.
 - **Pillow** (optional) — faster crops; `pip install "html-annotator[crops]"`.
 - **Node** (optional) — only for the Playwright suite.
-- Port **8791** must be free. Chosen on purpose: 8080 is often Docker.
+- A free port. **8791** by default (8080 is often Docker); `pick-port`
+  chooses another one when 8791 is taken.
 
 ## Windows
 
 The bridge, the CLI and the hooks are plain Python and run natively: Chrome or
 Edge is found in the usual places, `claude://` links open through the shell,
-`/p/<path-from-home>` takes forward slashes in the URL and maps them to
+`/p/<path-from-pages-root>` takes forward slashes in the URL and maps them to
 backslashes on disk, and page slugs stay filesystem-safe. CI runs the Python
 tests and a real `/save` on `windows-latest`.
 
@@ -205,10 +264,46 @@ What is not covered there: the Playwright suite (`tests/run.sh`) is only
 exercised on macOS and Linux, and if the Microsoft Store `python3` alias gets
 in the way, disable it.
 
+## Docker / WSL
+
+The bridge can run in a container, for example Docker inside WSL on Windows,
+with the browser on the host. Three things differ from a local install:
+
+- **Bind to all interfaces inside the container:** `HTML_ANNOTATOR_HOST=0.0.0.0`.
+  The bridge logs a warning for that; publish the port on the host's loopback
+  only (`-p 127.0.0.1:8791:8791`) so the network cannot reach it. Use
+  `0.0.0.0`, not a specific non-loopback address such as the container's own
+  IP: `ping`, `status` and `ensure` always look for the bridge on 127.0.0.1, so
+  with a bind on one specific address they do not find it.
+- **Same port inside and outside.** The port inside the container must equal
+  the published host port in the `-p` mapping, because pages and the bridge
+  compare origins on that port. Set it explicitly with
+  `HTML_ANNOTATOR_PORT=<port>` or `pick-port --port <port>`; do not let
+  `pick-port` search inside a container, it only sees the container's ports.
+- **Pages root on a mount:** mount the directory with your pages and point
+  `HTML_ANNOTATOR_PAGES_ROOT` at it; `/p/<path>` is then relative to that mount.
+
+```bash
+docker run -p 127.0.0.1:8791:8791 \
+  -e HTML_ANNOTATOR_HOST=0.0.0.0 -e HTML_ANNOTATOR_PORT=8791 \
+  -e HTML_ANNOTATOR_PAGES_ROOT=/pages -v "$HOME/pages:/pages" \
+  -e HTML_ANNOTATOR_ROOT=/annotations -v "$HOME/annotations:/annotations" \
+  <image> python -m html_annotator serve
+```
+
+Open pages via `http://127.0.0.1:8791/p/<path-under-/pages>` or
+`http://localhost:8791/...` on the host. Not via the container's IP or the WSL
+IP (for example `http://172.x.x.x:8791`): the bridge answers those with 403 on
+purpose, because its Host and Origin checks accept loopback names only.
+A page opened as `file://` falls back to `http://127.0.0.1:8791` as best
+effort, but Chrome blocks `file://` pages from reaching loopback anyway
+(Private Network Access); serve pages through `/p/`.
+
 ## What this repo deliberately does not ship
 
 - The annotation root (`~/annotations`) — user data, created on first save.
 - Skills that the handbook mentions but that are not in this repo:
-  `nieuwe-sessie` (`POST /sessie`), `bericht-sturen`. The annotator works
+  a session-start skill (`POST /sessie`), and a messaging skill that drives the
+  Send button (see `docs/verstuur-knop-onderzoek.md`). The annotator works
   without them; say so instead of failing silently.
 - The owner's personal glue — see `extras/README.md` and `docs/SCOPE.md`.

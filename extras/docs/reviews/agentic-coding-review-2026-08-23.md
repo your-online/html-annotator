@@ -72,4 +72,4 @@ captures is hoger omdat ongemutileerde baselines meekomen.
 ## Open twijfel
 
 Klantfixture in de suite: geen. De pagina hoort niet bij deze skill-repo.
-case-08 encodeert de gerapporteerde bug al. Commit-splitsing: wacht op Luc.
+case-08 encodeert de gerapporteerde bug al. Commit-splitsing: wacht op de eigenaar.

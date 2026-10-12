@@ -46,7 +46,7 @@ DOT_OK = {".gitignore", ".git", ".github", ".claude"}
 OUD_NAMEN = (
     "annotator_config.py", "annotator_record.py", "annotator_refs.py",
     "annotator-bridge.py", "ensure-bridge.sh", "hook-ensure-bridge.sh",
-    "toon-annotaties.py", "pas-hunk-toe.py", "vind-todolijst.sh",
+    "toon-annotaties.py", "pas-hunk-toe.py",
     "install.sh",
 )
 OUD_PAD = re.compile(

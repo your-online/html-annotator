@@ -2,13 +2,43 @@
 
 Read this file when `SKILL.md` asks you to — before delivering HTML and before processing annotations. Part 1 (embedding) lives in `SKILL.md`; what used to be here about spawning tasks, draft cards and `la-sub` has moved to `extras/agent-handbook-extras.md` (see `docs/SCOPE.md`).
 
+> **Draft messages (`la-draft`): always the Send-button version.** A draft mail or
+> WhatsApp message on a page always gets the Verstuur button (`data-la-send*`
+> attributes, `references/send-snippet.html` before the annotator snippet, watcher
+> `bin/wacht-op-verstuur.py` in the background, plain-text `<p>` blocks). Never the
+> plain card, whatever the calling skill's example shows. Exact steps: `SKILL.md`,
+> section "Draft message card (LA-DRAFT)".
+
 ## Part 2: the bridge
 
 A browser page cannot write to disk on its own. The bridge
 (`html_annotator/bridge.py`, stdlib only) solves that: it listens on
-**127.0.0.1:8791** (not 0.0.0.0, and not 8080 because that belongs to Docker),
+**127.0.0.1:8791** by default (not 8080, because that belongs to Docker),
 manages the round directories, writes the JSON and cuts out the screenshot
 crops.
+
+**Port, bind address and pages root can differ per machine.** Never assume
+8791 and never build a URL yourself:
+
+- `python -m html_annotator url <file>` prints the `/p/` link for a page;
+- `python -m html_annotator url --base` prints only the base URL
+  (`http://127.0.0.1:<port>`), for `curl` and scripts.
+
+Where the values come from, highest first: environment
+(`HTML_ANNOTATOR_PORT`, `HTML_ANNOTATOR_HOST`, `HTML_ANNOTATOR_PAGES_ROOT`) >
+the per-user config file (`~/.config/html-annotator/config.json`,
+`$XDG_CONFIG_HOME` respected, on Windows `%APPDATA%\html-annotator\config.json`;
+keys `port`, `host`, `pages_root`) > the defaults 8791, 127.0.0.1 and the home
+directory. URLs always use 127.0.0.1, also when the bridge binds to 0.0.0.0
+(Docker).
+
+`python -m html_annotator pick-port` chooses a port once: it tries 8791–8890,
+takes the first free one (a port where this bridge already answers counts as
+good), falls back to a port from the OS when all are taken, and writes it to
+the config file. Run it after installing, and whenever `ensure` says the port
+is taken by something else. If pick-port itself fails, find a free port
+yourself and store it with `python -m html_annotator pick-port --port N`.
+`ensure` never switches ports on its own.
 
 All commands below run as `python -m html_annotator <command>`;
 after a pip/pipx install, `html-annotator <command>` is exactly the same.
@@ -24,7 +54,8 @@ Running it in the foreground is possible too, for debugging:
 python -m html_annotator serve
 ```
 
-Is it running? `curl -s http://127.0.0.1:8791/ping` gives
+Is it running? `python -m html_annotator status` (or
+`curl -s "$(python -m html_annotator url --base)/ping"`) gives
 `{"ok": true, "bridge": "html-annotator", "version": 2, "release": "...", ...}`
 (`version` is the protocol the snippet speaks, `release` the package version).
 In the page itself
@@ -38,7 +69,7 @@ Pillow, Chrome renders the region itself through an iframe clip. Both routes are
 tested. Full-page screenshots are cached in
 `$TMPDIR/html-annotator-shots`.
 
-Endpoints: `GET /ping`, `GET /p/<path-from-home>` (forward slashes in the URL, on Windows too), `POST /session`, `/save`, `/delete`,
+Endpoints: `GET /ping`, `GET /p/<path-from-pages-root>` (forward slashes in the URL, on Windows too; nothing outside the pages root, no dotfiles or dot-directories, also not through a symlink), `POST /session`, `/save`, `/delete`,
 `/remove-all`, `/resolve`, `/state`, `/state-save`, `/sessie`.
 
 `/session` returns, besides the counts, the open annotations as well (nr, id,
@@ -49,7 +80,7 @@ draw.
 pass `{"prompt": "..."}` or a ready-made `{"url": "claude://code/new?q=..."}`.
 Only the claude scheme is accepted, so this does not become a general
 URL opener. It exists because an embedded browser does not pass custom schemes
-through; see the skill `nieuwe-sessie`.
+through; a session-start skill can build on it.
 
 ## Part 3: rounds and directory structure
 
@@ -184,7 +215,7 @@ It stays in the JSON as history (with `"resolved": true` and
 sees what is still open. Do this per processed batch, not only at the end:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8791/resolve \
+curl -s -X POST "$(python -m html_annotator url --base)/resolve" \
   -H 'Content-Type: application/json' \
   -d '{"jsonPath":"~/annotations/todos/ronde-09/annotations.json","nrs":[1,3,4]}'
 ```
@@ -214,7 +245,11 @@ as soon as you set it resolved; the reviewer can also tick it off there himself 
 For every HTML with tickable items or rows (todo lists, test case tables,
 review rows). The component is a separate block, `<!-- LA-CHECKLIST v1` through
 `<!-- /LA-CHECKLIST -->`, canonical in `references/checklist-snippet.html`.
-Self-contained, no dependencies, just like the annotator snippet.
+Self-contained, no dependencies, just like the annotator snippet. Like the
+annotator snippet it talks to the bridge that served the page (`location.origin`
+on a `/p/` URL), whatever its port. Opened as `file://` it falls back to
+`http://127.0.0.1:8791`, best effort only: Chrome blocks `file://` pages from
+reaching loopback anyway (Private Network Access), so open pages via `url`.
 
 **Embedding:**
 

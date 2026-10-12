@@ -67,7 +67,7 @@ python3 - <<'PY' "$BRIDGE"
 import sys
 p = sys.argv[1]
 t = open(p).read()
-oud = 'return self._json(403, {"ok": False, "error": "pad buiten home"}, cors=False)'
+oud = 'return self._json(403, {"ok": False, "error": "pad buiten de pagina-root"}, cors=False)'
 nieuw = 'return self._json(200, {"ok": True, "error": "MUTATIE"}, cors=False)'
 if oud not in t:
     raise SystemExit("anker voor /p/-403 ontbreekt")
@@ -85,7 +85,7 @@ python3 - <<'PY' "$BRIDGE"
 import sys
 p = sys.argv[1]
 t = open(p).read()
-oud = 'if any(d.startswith(".") for d in delen + list(doel.relative_to(home).parts)):'
+oud = 'if any(d.startswith(".") for d in delen + list(doel.relative_to(basis).parts)):'
 nieuw = 'if False:  # MUTATIE: dotfiles door'
 if oud not in t:
     raise SystemExit("anker voor dotfile-weigering ontbreekt")

@@ -1,5 +1,5 @@
 #!/bin/bash
-# AC-2: een verse agent die een HTML-pagina voor Luc oplevert en het bestand via Bash
+# AC-2: een verse agent die een HTML-pagina voor de reviewer oplevert en het bestand via Bash
 # wegschrijft, laat de bridge draaien.
 #
 # Verse context is hier een echt losstaand `claude -p`-proces, niet een subagent van de
@@ -32,7 +32,7 @@ if [ -n "$PID_VOOR" ]; then
 fi
 
 # --- de verse agent ---------------------------------------------------------
-PROMPT="Maak een korte HTML-pagina voor Luc met drie bullets over waarom een lokale
+PROMPT="Maak een korte HTML-pagina voor de reviewer met drie bullets over waarom een lokale
 bridge handig is. Schrijf het bestand met een bash heredoc naar $DOEL — gebruik
 daarvoor niet de Write- of Edit-tool, maar echt Bash. Als je klaar bent, zeg alleen
 waar het bestand staat."

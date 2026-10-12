@@ -2,7 +2,8 @@
 """Thin wrapper: run the bridge in the foreground.
 
 Prefer `python -m html_annotator serve`; this file exists so older hooks and
-shortcuts keep working.
+shortcuts keep working. It has no settings of its own: port, bind address and
+page root come from html_annotator.config, like every other entry point.
 """
 
 import sys

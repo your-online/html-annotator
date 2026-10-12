@@ -5,7 +5,8 @@ New embeds carry the ``<!-- HTML-ANNOTATOR v3 -->`` marker; the older
 ``LUC-ANNOTATOR`` v1/v2 blocks stay recognised everywhere (content hash, hooks),
 so pages that already exist keep working.
 
-Runs on 127.0.0.1:8791 (macOS, Linux, Windows) and writes annotations straight
+Runs on 127.0.0.1:8791 by default (macOS, Linux, Windows; port, bind address and
+page root come from config.py) and writes annotations straight
 to <root>/<page-slug>/ronde-NN/annotations.json, screenshot crops included in
 ronde-NN/screenshots/. The root is ~/annotations unless configured otherwise
 (see config.py).
@@ -15,7 +16,7 @@ Chrome (or Edge) cuts the crop itself through an iframe clip. No browser found:
 the annotation is stored without a crop.
 
 Start:  python -m html_annotator serve
-Check:  curl -s http://127.0.0.1:8791/ping
+Check:  python -m html_annotator status
 """
 
 import base64
@@ -30,6 +31,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import socket
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,9 +40,11 @@ from . import __version__, config
 from .record import schoon_locator, zet_ref_velden
 from .refs import expand_comment
 
-HOST = config.HOST
+HOST = config.HOST            # adres in URL's en eigen origins: altijd loopback
+BIND = config.host()          # waar de socket luistert (standaard ook 127.0.0.1)
 PORT = config.port()
 ROOT = str(config.root())
+PAGES_ROOT = config.pages_root()
 
 
 def vind_chrome():
@@ -116,24 +120,40 @@ def slugify(tekst, standaard="pagina"):
     return s[:60] or standaard
 
 
+def _is_eigen_p_url(page):
+    """True voor http(s)://<loopback>:<deze poort>/p/..."""
+    try:
+        u = urllib.parse.urlparse(page or "")
+        if u.scheme not in ("http", "https") or not u.path.startswith("/p/"):
+            return False
+        poort = u.port or (443 if u.scheme == "https" else 80)
+        return config.is_loopback(u.hostname or "") and poort == PORT
+    except ValueError:
+        return False
+
+
 def pad_van_page(page, page_file):
     """Absoluut bestandspad van de pagina, of None."""
+    # Eerst de /p/-URL, maar alleen als het een pagina van deze bridge is (http(s),
+    # loopback-host, deze poort): die is relatief aan de pagina-root. Het snippet stuurt
+    # als pageFile "~/<pad-na-/p/>", wat alleen klopt zolang de root home is. Een
+    # file://-pagina of een andere site met "/p/" in het pad gaat via pageFile.
+    if _is_eigen_p_url(page):
+        try:
+            rel = urllib.parse.unquote(urllib.parse.urlparse(page).path).split("/p/", 1)[1]
+            p = os.path.join(str(PAGES_ROOT), *[d for d in rel.split("/") if d])
+            if os.path.isfile(p):
+                return p
+        except Exception:
+            pass
     if page_file:
-        p = os.path.expanduser(page_file)  # "~/Desktop/x.html" komt van de /p/-route
+        p = os.path.expanduser(page_file)
         if os.path.isfile(p):
             return p
     if page and page.startswith("file://"):
         p = urllib.parse.unquote(urllib.parse.urlparse(page).path)
         if os.path.isfile(p):
             return p
-    if page and "/p/" in page:
-        try:
-            rel = urllib.parse.unquote(urllib.parse.urlparse(page).path).split("/p/", 1)[1]
-            p = os.path.join(os.path.expanduser("~"), rel)
-            if os.path.isfile(p):
-                return p
-        except Exception:
-            pass
     return None
 
 
@@ -741,24 +761,67 @@ def origin_toegestaan(origin):
 # de hash en verstuurt precies die tekst. Elke bewerking na de klik trekt het akkoord in.
 
 SEND_VELDEN = ("channel", "to", "subject", "text")
+# Alleen in de canon als ze niet leeg zijn, zodat WhatsApp-hashes van vóór mail
+# (27-09-2026) gelijk blijven. Mail: afzenderaccount, Cc, Bcc en het bericht waarop
+# geantwoord wordt (Graph-messageId; leeg = nieuwe mail).
+SEND_EXTRA = ("account", "cc", "bcc", "reply")
+SEND_ALLE = SEND_VELDEN + SEND_EXTRA
+
+EMAIL = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\"]+$")
+
+
+def adressen(waarde):
+    """Canonieke adreslijst: kleine letters, ontdubbeld, gesorteerd, komma-gescheiden.
+    Volgorde en hoofdletters bepalen de bezorging niet, dus de hash ook niet."""
+    if isinstance(waarde, (list, tuple)):
+        delen = waarde
+    else:
+        delen = re.split(r"[,;]", waarde or "")
+    return ",".join(sorted({d.strip().lower() for d in delen if d and d.strip()}))
+
 
 # Ontvanger zoals de verzendtool hem krijgt, per kanaal. WhatsApp
 # (mcp__whatsapp__send_message, argument ``recipient``): een nummer met landcode
 # zonder + of spaties, of een JID. Een kaart met "+31 6 ..." zou nooit matchen in de
-# gate, dus die wordt bij de klik al geweigerd.
+# gate, dus die wordt bij de klik al geweigerd. Mail: één of meer e-mailadressen
+# (gecontroleerd na canonicalisatie).
 SEND_TO = {
     "whatsapp": re.compile(r"^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$"),
+    "mail": re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\"]+(?:,[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\"]+)*$"),
 }
 
 
+def send_norm(v):
+    """Velden zoals ze gehasht en opgeslagen worden (adreslijsten canoniek bij mail)."""
+    uit = {k: (v.get(k) or "") for k in SEND_ALLE}
+    if uit["channel"] == "mail":
+        for k in ("to", "cc", "bcc"):
+            uit[k] = adressen(uit[k])
+        uit["account"] = uit["account"].strip().lower()
+    return uit
+
+
 def send_canon(v):
-    """Canonieke vorm van wat er de deur uit gaat: kanaal, ontvanger, onderwerp, tekst."""
-    return json.dumps({k: (v.get(k) or "") for k in SEND_VELDEN}, sort_keys=True,
+    """Canonieke vorm van wat er de deur uit gaat: kanaal, ontvanger, onderwerp, tekst,
+    plus bij mail afzender, Cc, Bcc en antwoord-op."""
+    n = send_norm(v)
+    return json.dumps({k: n[k] for k in SEND_ALLE if k in SEND_VELDEN or n[k]}, sort_keys=True,
                       ensure_ascii=False, separators=(",", ":"))
 
 
 def send_hash(v):
     return hashlib.sha256(send_canon(v).encode("utf-8")).hexdigest()
+
+
+def _check_mail(n):
+    if not EMAIL.match(n["account"]):
+        raise ValueError("mail zonder geldig afzenderaccount (data-la-send-account): %r" % n["account"])
+    for k in ("to", "cc", "bcc"):
+        for a in filter(None, n[k].split(",")):
+            if not EMAIL.match(a):
+                raise ValueError("%s bevat %r: geen e-mailadres" % (k, a))
+    if re.search(r"\s", n["reply"]):
+        raise ValueError("reply (messageId) mag geen spaties bevatten")
 
 
 def _send_entry(payload):
@@ -783,14 +846,21 @@ def h_send_approve(payload):
     if not (payload.get("channel") and payload.get("to")):
         raise ValueError("kanaal en ontvanger zijn verplicht")
     if payload.get("channel") not in SEND_TO:
-        # Eerst alleen WhatsApp (besluit 26-09-2026). Een klik op een mail- of
-        # Teams-kaart zou een akkoord suggereren dat de gate niet kent.
+        # WhatsApp (26-09-2026) en mail (27-09-2026). Een klik op een Teams-kaart
+        # zou een akkoord suggereren dat de gate niet kent.
         raise ValueError("kanaal %r heeft nog geen Verstuur-knop (alleen: %s)"
                          % (payload.get("channel"), ", ".join(sorted(SEND_TO))))
-    vorm = SEND_TO.get(payload.get("channel"))
-    if vorm and not vorm.match(payload.get("to")):
-        raise ValueError("ontvanger %r past niet bij %s (verwacht: nummer met landcode zonder +, "
-                         "of een JID)" % (payload.get("to"), payload.get("channel")))
+    waarde = send_norm(payload)
+    if waarde["channel"] != "mail" and any(waarde[k] for k in SEND_EXTRA):
+        raise ValueError("account/cc/bcc/reply bestaan alleen bij kanaal mail")
+    vorm = SEND_TO.get(waarde["channel"])
+    if not vorm.match(waarde["to"]):
+        raise ValueError("ontvanger %r past niet bij %s (verwacht: %s)" % (
+            payload.get("to"), waarde["channel"],
+            "e-mailadres(sen), komma-gescheiden" if waarde["channel"] == "mail"
+            else "nummer met landcode zonder +, of een JID"))
+    if waarde["channel"] == "mail":
+        _check_mail(waarde)
     p, data, comp, key = _send_entry(payload)
     # Waar de akkoorden vandaan komen, zodat de nastap-hook /send-done kan aanroepen
     # zonder de pagina te kennen.
@@ -798,7 +868,6 @@ def h_send_approve(payload):
     if payload.get("pageFile") or not data.get("pageFile"):
         data["pageFile"] = pad_van_page(payload.get("page"), payload.get("pageFile"))
     nu = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    waarde = {k: payload.get(k) or "" for k in SEND_VELDEN}
     h = send_hash(waarde)
     oud = comp.get(key) or {}
     if oud.get("status") == "sent" and oud.get("hash") == h:
@@ -940,20 +1009,22 @@ class Handler(BaseHTTPRequestHandler):
             # the package version (html_annotator.__version__).
             return self._json(200, {"ok": True, "bridge": "html-annotator",
                                     "version": 2, "release": __version__,
+                                    "pid": os.getpid(),
                                     "root": ROOT, "pillow": HEEFT_PILLOW})
-        # /p/<pad-vanaf-home> serveert een lokale pagina same-origin met de bridge.
-        # Voorbeeld: http://127.0.0.1:8791/p/Desktop/todos.html
+        # /p/<pad-vanaf-pagina-root> serveert een lokale pagina same-origin met de
+        # bridge. De root is config.pages_root() (standaard home).
+        # Voorbeeld: http://127.0.0.1:8791/p/Desktop/plan.html
         if pad.startswith("/p/"):
             # URL-pad is altijd met forward slashes; op Windows maakt Path daar
-            # backslashes van. Nooit buiten de home-map serveren.
+            # backslashes van. Nooit buiten de pagina-root serveren.
             # Dotfiles en dot-mappen (~/.ssh, .env, ~/.claude) nooit, ook niet via symlink.
             rel = urllib.parse.unquote(pad[3:])
-            home = Path.home().resolve()
+            basis = PAGES_ROOT
             delen = [d for d in rel.split("/") if d]
-            doel = Path(home, *delen).resolve()
-            if home not in doel.parents:
-                return self._json(403, {"ok": False, "error": "pad buiten home"}, cors=False)
-            if any(d.startswith(".") for d in delen + list(doel.relative_to(home).parts)):
+            doel = Path(basis, *delen).resolve()
+            if basis not in doel.parents:
+                return self._json(403, {"ok": False, "error": "pad buiten de pagina-root"}, cors=False)
+            if any(d.startswith(".") for d in delen + list(doel.relative_to(basis).parts)):
                 return self._json(403, {"ok": False, "error": "verborgen pad"}, cors=False)
             return self._bestand(str(doel))
         self._json(404, {"ok": False, "error": "onbekend pad"})
@@ -991,7 +1062,7 @@ class Handler(BaseHTTPRequestHandler):
 class BridgeServer(ThreadingHTTPServer):
     """HTTPServer.server_bind calls socket.getfqdn(), a reverse-DNS lookup that can hang
     for half a minute on hosts without working reverse DNS (seen on macOS CI runners).
-    The bridge only ever listens on a loopback IP, so the name is known up front."""
+    The bind address is known up front, so no lookup is needed."""
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)
@@ -1002,15 +1073,27 @@ class BridgeServer(ThreadingHTTPServer):
 def main():
     try:
         os.makedirs(ROOT, exist_ok=True)
-        srv = BridgeServer((HOST, PORT), Handler)
+        if ":" in BIND:
+            BridgeServer.address_family = socket.AF_INET6
+        srv = BridgeServer((BIND, PORT), Handler)
     except Exception:
         import traceback
-        print("html-annotator bridge failed to start on http://%s:%d" % (HOST, PORT), flush=True)
+        print("html-annotator bridge failed to start on %s:%d" % (BIND, PORT), flush=True)
         traceback.print_exc()
         sys.stderr.flush()
         raise
-    print("html-annotator %s listening on http://%s:%d (root: %s, pillow: %s)"
-          % (__version__, HOST, PORT, ROOT, HEEFT_PILLOW), flush=True)
+    print("html-annotator %s listening on http://%s:%d (root: %s, pages: %s, pillow: %s)"
+          % (__version__, HOST, PORT, ROOT, PAGES_ROOT, HEEFT_PILLOW), flush=True)
+    if not config.is_loopback(BIND):
+        # Opt-in (Docker/WSL): de socket is dan ook van buiten deze machine bereikbaar.
+        # Host- en Origin-check blijven alleen loopback-namen toelaten.
+        print("WARNING: bound to %s:%d, not loopback. Other machines on the network can "
+              "reach this port unless a firewall or a Docker port mapping blocks them. "
+              "Host and Origin checks still accept loopback names only." % (BIND, PORT),
+              flush=True)
+    if not PAGES_ROOT.is_dir():
+        print("WARNING: pages root %s does not exist; /p/ will answer 404" % PAGES_ROOT,
+              flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

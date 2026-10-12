@@ -21,6 +21,7 @@ bundler; macOS, Linux and Windows run the same commands.
 pipx install git+https://github.com/your-online/html-annotator
 html-annotator install-skill
 html-annotator install-hooks
+html-annotator pick-port      # stores a free port (8791 when it is free)
 ```
 
 Per OS, if you prefer a checkout over pipx:
@@ -35,6 +36,7 @@ git clone https://github.com/your-online/html-annotator \
 cd ~/repos/html-annotator
 python3 -m html_annotator install-skill
 python3 -m html_annotator install-hooks
+python3 -m html_annotator pick-port
 ```
 
 </td><td>
@@ -45,6 +47,7 @@ git clone https://github.com/your-online/html-annotator `
 cd $HOME\repos\html-annotator
 py -3 -m html_annotator install-skill --copy
 py -3 -m html_annotator install-hooks
+py -3 -m html_annotator pick-port
 ```
 
 </td><td>
@@ -55,6 +58,7 @@ git clone https://github.com/your-online/html-annotator \
 cd ~/repos/html-annotator
 python -m html_annotator install-skill --copy
 python -m html_annotator install-hooks
+python -m html_annotator pick-port
 ```
 
 </td></tr>
@@ -76,7 +80,7 @@ pane:
 
 ```bash
 html-annotator url ~/Desktop/plan.html
-# http://127.0.0.1:8791/p/Desktop/plan.html
+# http://127.0.0.1:8791/p/Desktop/plan.html   (8791 is the default port)
 ```
 
 **5. Annotate and process.** Drag, comment, Save. Then, in the agent session,
@@ -85,17 +89,18 @@ html-annotator url ~/Desktop/plan.html
 
 ## The `/p/` rule
 
-Pages open on `http://127.0.0.1:8791/p/<path-from-home>`. Take the absolute
-path, strip the home directory, append the rest with forward slashes on every
-OS. Anything outside the home directory is refused with 403.
+Pages open on `http://127.0.0.1:<port>/p/<path-from-pages-root>`. Do not build
+that URL by hand: `html-annotator url <file>` knows the port (8791 by default,
+see `pick-port`) and the pages root (the home directory by default). Anything
+outside the pages root, and any dotfile or dot-directory, is refused with 403.
 
 This is not a preference. A page opened as `file://` or rendered in a preview
 pane as a `data:` document sits on an origin that cannot reach loopback
 (Private Network Access), so every Save fails silently into localStorage.
 Through `/p/` the page is same-origin with the bridge and everything works,
 including the self-heal that flips the status pill when the bridge comes up
-later. `html-annotator url <file>` builds the link for you; hand it over as a
-clickable markdown link, not inside backticks.
+later. Hand the link that `url` prints over as a clickable markdown link, not
+inside backticks.
 
 ## The agent workflow
 
@@ -132,7 +137,8 @@ truth).
 | `show [page] [--open\|--list\|--search X\|--since N]` | open annotations |
 | `resolve <slug\|json> --nrs 1,2` | mark annotations as processed |
 | `apply-hunk <json> --nr 1 --hunks 2` | apply one block of a draft edit |
-| `url <file>` | the `/p/` link for a local file |
+| `url <file>` · `url --base` | the `/p/` link for a local file · the base URL only |
+| `pick-port [--port N]` | choose a free port (8791–8890, else from the OS) and store it in the config file |
 | `install-skill` · `install-hooks` | install, both idempotent |
 | `--version` | print the version |
 
@@ -157,7 +163,7 @@ same thing.
 
 ```
 HTML page  ──►  references/annotator-snippet.html
-                   fetch 127.0.0.1:8791
+              fetch the origin that served /p/
                         ▼
                 html-annotator serve
                         ▼

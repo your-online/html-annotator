@@ -11,7 +11,7 @@
 #
 #   1. via de bridge: fetch naar /ping?diag=<base64>. De bridge logt elke request-regel,
 #      dus de diagnose belandt in bridge.log zonder dat er een endpoint bij hoeft.
-#   2. op het scherm: een blok met dezelfde gegevens plus een kopieerknop, zodat Luc ze
+#   2. op het scherm: een blok met dezelfde gegevens plus een kopieerknop, zodat de reviewer ze
 #      kan plakken als kanaal 1 het niet haalt.
 #
 # Uitlezen doe je met lees-sideview-probe.sh.

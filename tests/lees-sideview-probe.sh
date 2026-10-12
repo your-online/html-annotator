@@ -25,7 +25,7 @@ if [ -z "$REGELS" ]; then
   echo "GEEN probe-regels in bridge.log."
   echo
   echo "Dat is zelf een uitslag: de pagina heeft de bridge niet kunnen bereiken vanaf de"
-  echo "origin waar hij draaide. Vraag Luc om de diagnose van het scherm te kopiëren."
+  echo "origin waar hij draaide. Vraag de reviewer om de diagnose van het scherm te kopiëren."
   echo
   echo "Wat er wel binnenkwam, laatste origins:"
   grep -o 'origin=[^ ]*' "$LOG" | sort | uniq -c | tail -10

@@ -1,6 +1,6 @@
 /* AC-6: meerdere wijzigingen in één conceptbericht zijn los van elkaar te behandelen.
 
-   Waarom dit bestaat: vóór hunks was één bewerking één brok. Maakte Luc drie wijzigingen
+   Waarom dit bestaat: vóór hunks was één bewerking één brok. Maakte de reviewer drie wijzigingen
    in dezelfde mail, dan moest een agent ze alledrie overnemen of geen. Dat is precies wat
    een unified diff wél kan en wij niet.
 
@@ -38,7 +38,7 @@ De coverage-cijfers staan klaar. Ik loop ze donderdag met je door.
 Het losse overzicht staat klaar.
 
 Groet,
-Luc`;
+Sam`;
 
 /* Drie wijzigingen, ver uit elkaar en elk aaneengesloten, zodat ze echt drie blokken
    worden. Een eerdere versie gebruikte "Laat even weten of dat schikt." ->
@@ -93,7 +93,7 @@ zeg(hunks.every((h) => typeof h.alinea === 'number' && h.alinea >= 1),
   `elk blok weet in welke alinea het staat (${hunks.map((h) => h.alinea).join(',')})`);
 
 // De nummering op het scherm moet dezelfde blokken aanwijzen als de opslag, anders
-// bedoelen Luc en de agent iets anders met "blok 2".
+// bedoelen de reviewer en de agent iets anders met "blok 2".
 const opScherm = await page.evaluate(() =>
   Array.prototype.map.call(document.querySelectorAll('.la-draft-txt .la-hunk-nr'),
     (e) => Number(e.textContent)));
@@ -134,7 +134,7 @@ zeg(/staat gereed\./.test(eind),
 zeg(/staan klaar\./.test(eind),
   'de andere "klaar." is niet aangeraakt — het anker koos, niet de volgorde');
 
-/* Terug naar de pagina: nadat een agent één blok heeft doorgevoerd moet Luc zijn nog
+/* Terug naar de pagina: nadat een agent één blok heeft doorgevoerd moet de reviewer zijn nog
    openstaande blokken blíjven zien. Anders raakt hij zijn eigen wijziging uit beeld
    zodra er iets van verwerkt is — precies wanneer overzicht het meest telt. */
 writeFileSync(bestand, `<!doctype html><meta charset="utf-8"><title>${slug}</title>

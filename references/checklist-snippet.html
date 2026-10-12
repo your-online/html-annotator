@@ -15,7 +15,11 @@
 </style>
 <script>
 (function(){
-  var BRIDGE="http://127.0.0.1:8791";
+  /* Via /p/ geserveerd: de bridge is de eigen origin (welke poort ook). Als bestand
+     geopend: best effort op de standaardpoort; Chrome blokkeert file:// naar
+     loopback toch al (Private Network Access), dus open de pagina via `url`. */
+  var BRIDGE=(location.protocol.indexOf("http")===0&&location.pathname.indexOf("/p/")===0)
+    ?location.origin:"http://127.0.0.1:8791";
   var items=[].slice.call(document.querySelectorAll("[data-la-check]"));
   if(!items.length)return;
   function post(pad,body){return fetch(BRIDGE+pad,{method:"POST",

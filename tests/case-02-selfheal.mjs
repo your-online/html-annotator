@@ -1,13 +1,13 @@
 /* AC-1: een pagina die al open staat terwijl de bridge omlaag is, herstelt zichzelf
    zodra de bridge omhoog komt — zonder reload — en slaat daarna echt naar schijf op.
-   Dat is de "na-zwengel" die Luc nu handmatig geeft.
+   Dat is de "na-zwengel" die de reviewer nu handmatig geeft.
 
    Draait in de systeem-Chrome (channel: chrome) en niet in een gedownloade Chromium:
    dat staat dichter bij de Electron-runtime van Claude Desktop. Het blijft een
    benadering — zie criteria.md, "Wat de suite niet toetst".
 
    Twee origins, omdat het gedrag ervan afhangt:
-     file  — pagina van schijf, zoals Luc hem los opent. Moet werken.
+     file  — pagina van schijf, zoals de reviewer hem los opent. Moet werken.
      data  — data:-snapshot, de vorm die de preview-pane volgens SKILL.md gebruikt.
              Kan principieel niet werken: Chrome weigert loopback vanuit een opaque
              origin met "the resource is in more-private address space `loopback`"
@@ -57,7 +57,7 @@ function bridgeUp() {
 
 /* Mutaties over de fix zelf. Zonder dit weet je niet wélk deel van het zelfherstel het
    werk doet: de timer, of de focus/visibility-listeners. Dat verschil is niet
-   academisch — een sideview-paneel waar Luc niet in klikt krijgt nooit een focus-event,
+   academisch — een sideview-paneel waar de reviewer niet in klikt krijgt nooit een focus-event,
    dus als de listeners het doen werkt de fix juist daar niet.
 
    CASE02_MUTATIE=geen-interval | geen-listeners | geen-poller
@@ -71,7 +71,7 @@ const LISTENERS_UIT = [
 ];
 const MUTATIES = {
   // De timer eruit: herstel moet uitblijven. Slaagt het alsnog, dan deden de
-  // focus-listeners het werk — en die vuren nooit in een sideview-paneel waar Luc
+  // focus-listeners het werk — en die vuren nooit in een sideview-paneel waar de reviewer
   // niet in klikt, dus dan lost de fix zijn eigen use-case niet op.
   'geen-interval': { paren: INTERVAL_UIT, herstelVerwacht: false },
   // De listeners eruit: herstel moet blijven werken, op de timer alleen.
@@ -79,7 +79,7 @@ const MUTATIES = {
   // PAS OP bij het lezen van dit groene resultaat: het betekent NIET dat de listeners
   // overbodig zijn. Chrome throttelt setInterval in een verborgen tab naar ongeveer
   // eens per minuut, en de timer in het snippet slaat een verborgen pagina bewust
-  // over. Juist dan is visibilitychange wat de pagina meteen bijwerkt zodra Luc
+  // over. Juist dan is visibilitychange wat de pagina meteen bijwerkt zodra de reviewer
   // terugkijkt. Deze case draait alleen met een zichtbare pagina en is dus blind voor
   // het geval waarin de listeners hun bestaan verdienen. Verwijder ze niet op grond
   // van deze groene run; bouw eerst een variant die de pagina echt verbergt.
@@ -93,7 +93,7 @@ const MUTATIES = {
    pagina weer zichtbaar is mag de timer ook weer vuren, dus herstel binnen het
    assertievenster kan van beide komen — gemeten in ronde 8: met de listeners eruit
    herstelde de pagina alsnog. De variant bewijst dus dát een verborgen paneel bijkomt
-   nadat Luc erop terugkijkt, niet welke regel dat deed. Wil je die scheiding echt, dan
+   nadat de reviewer erop terugkijkt, niet welke regel dat deed. Wil je die scheiding echt, dan
    moet de timer-periode omhoog tijdens deze variant; dat is bewust niet gebouwd omdat
    de gebruikersvraag "komt het paneel bij" is, niet "welke listener deed het".
    De mutatie 'geen-poller' dekt af dat het blok als geheel dragend is, ook hier. */
@@ -171,8 +171,8 @@ for (const origin of ORIGINS) {
     falen++; await page.close(); continue;
   }
 
-  /* 1b. Verborgen-paneel-variant (CASE02_VERBORGEN=1). Dit staat dichter bij Luc's
-     werkelijkheid dan een pagina op de voorgrond: het sideview-paneel staat er terwijl
+  /* 1b. Verborgen-paneel-variant (CASE02_VERBORGEN=1). Dit staat dichter bij de
+     werkelijkheid van de reviewer dan een pagina op de voorgrond: het sideview-paneel staat er terwijl
      hij in de chat typt. De timer slaat een verborgen pagina bewust over, dus dan is
      `visibilitychange` het enige dat de pagina bijwerkt zodra hij terugkijkt. Zonder
      deze variant heeft die listener geen enkele assertie onder zich.
@@ -207,7 +207,7 @@ for (const origin of ORIGINS) {
       await page.close();
       continue;
     }
-    // en nu kijkt Luc weer naar het paneel
+    // en nu kijkt de reviewer weer naar het paneel
     await page.evaluate(() => {
       window.__verborgen = false;
       document.dispatchEvent(new Event('visibilitychange'));

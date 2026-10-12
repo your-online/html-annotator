@@ -1,18 +1,26 @@
-<!-- LA-SEND v1 — Verstuur-knop op la-draft-kaarten (eerst alleen WhatsApp).
+<!-- LA-SEND v1 — Verstuur-knop op la-draft-kaarten (WhatsApp en mail).
      Plak vóór het HTML-ANNOTATOR-blok. Werkt alleen op pagina's die via de bridge
      (/p/...) geopend zijn: /send-approve eist Origin = de bridge.
      Kaart-attributen (gezet door de agent die het concept schrijft):
        data-la-send="<unieke key>"          verplicht, zet de knop aan
-       data-la-send-channel="whatsapp"      ander kanaal: knop uit (nog geen gate)
+       data-la-send-channel="whatsapp"|"mail"  ander kanaal: knop uit (nog geen gate)
        data-la-send-to="<recipient>"        EXACT de waarde die de verzendtool krijgt.
                                             WhatsApp: nummer met landcode zonder + of
                                             spaties (31612345678), of een JID
                                             (31612345678@s.whatsapp.net, 1203...@g.us).
+                                            Mail: e-mailadres(sen), komma-gescheiden.
                                             Niet de naam: die staat in la-draft-hdr.
+     Alleen mail:
+       data-la-send-account="<afzender>"    verplicht; exact de account-parameter
+                                            (bijv. jij@example.com; MCP-server per account: config mail_servers)
+       data-la-send-cc / -bcc="<adressen>"  optioneel, komma-gescheiden
+       data-la-send-subject="<onderwerp>"   letterlijk; leeg bij een antwoord
+       data-la-send-reply="<messageId>"     Graph-id waarop je antwoordt; leeg = nieuwe mail
        data-la-send-session="<sessie-id van de eigenaar>"   informatief
-     De balk onder de kaart toont de exacte ontvangerwaarde, zodat de reviewer ziet
-     waarheen het gaat. De bridge verstuurt niets. Een klik legt kanaal+ontvanger+tekst
-     vast met een hash; elke bewerking daarna trekt het akkoord in. -->
+     De balk onder de kaart toont de exacte ontvangerwaarde(n) en bij mail de afzender,
+     zodat de reviewer ziet waarheen en vanaf waar het gaat. De bridge verstuurt niets.
+     Een klik legt alle velden vast met een hash; elke bewerking daarna trekt het akkoord in.
+     Mail gaat als vaste HTML-weergave van de platte tekst: opmaak op de kaart gaat niet mee. -->
 <style>
   .la-send-bar { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
   .la-send-btn { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer;
@@ -44,7 +52,18 @@
   // Zelfde paginasleutel als de checklist en de annotator: de volledige URL. De
   // bridge leidt daar het bestand en de slug van af.
   function page() { return location.href.split("#")[0]; }
-  var ONTVANGER = { whatsapp: /^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$/ };
+  var ADRES = /^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>"]+$/;
+  function adressen(s) {
+    // Zelfde canon als de bridge: kleine letters, ontdubbeld, gesorteerd.
+    var gezien = {};
+    (s || "").split(/[,;]/).forEach(function (a) { a = a.trim().toLowerCase(); if (a) gezien[a] = 1; });
+    return Object.keys(gezien).sort().join(",");
+  }
+  function adresLijst(s) { var l = adressen(s); return !!l && l.split(",").every(function (a) { return ADRES.test(a); }); }
+  var ONTVANGER = {
+    whatsapp: { test: function (v) { return /^(?:\d{8,15}|[0-9A-Za-z._-]+@(?:s\.whatsapp\.net|g\.us|lid))$/.test(v); } },
+    mail: { test: adresLijst }
+  };
   function tijd(iso) { var m = /T(\d\d:\d\d)/.exec(iso || ""); return m ? m[1] : ""; }
 
   function velden(kaart, box) {
@@ -55,6 +74,10 @@
       channel: kaart.getAttribute("data-la-send-channel") || "",
       to: kaart.getAttribute("data-la-send-to") || "",
       subject: kaart.getAttribute("data-la-send-subject") || "",
+      account: kaart.getAttribute("data-la-send-account") || "",
+      cc: kaart.getAttribute("data-la-send-cc") || "",
+      bcc: kaart.getAttribute("data-la-send-bcc") || "",
+      reply: kaart.getAttribute("data-la-send-reply") || "",
       text: tekst.replace(/\r\n/g, "\n"),
       html: box.__nieuwHtml || "",
       session: kaart.getAttribute("data-la-send-session") || ""
@@ -81,7 +104,12 @@
     var kanaal = kaart.getAttribute("data-la-send-channel") || "";
     var naar = kaart.getAttribute("data-la-send-to") || "";
     var doel = document.createElement("span"); doel.className = "la-send-doel";
-    doel.textContent = kanaal + " → " + naar;
+    var a = function (n) { return kaart.getAttribute("data-la-send-" + n) || ""; };
+    doel.textContent = kanaal !== "mail" ? kanaal + " → " + naar
+      : "mail · van " + a("account") + " → " + naar +
+        (a("cc") ? " · cc " + a("cc") : "") + (a("bcc") ? " · bcc " + a("bcc") : "") +
+        (a("reply") ? " · ↩ antwoord" : "") + (a("subject") ? ' · "' + a("subject") + '"' : "");
+    zeker.querySelector("span").textContent = "Zeker? " + doel.textContent;
     bar.insertBefore(doel, status);
 
     var weiger = !viaBridge ? "open de pagina via de bridge (/p/...) om te versturen"
@@ -89,6 +117,8 @@
           ((location.ancestorOrigins && Array.prototype.join.call(location.ancestorOrigins, ", ")) || document.referrer || "onbekend") + ")"
       : !ONTVANGER[kanaal] ? "Verstuur-knop bestaat nog niet voor kanaal '" + kanaal + "'"
       : !ONTVANGER[kanaal].test(naar) ? "ontvanger '" + naar + "' is geen geldige " + kanaal + "-recipient"
+      : kanaal === "mail" && !ADRES.test(a("account").trim()) ? "mail-kaart mist een geldig afzenderaccount (data-la-send-account)"
+      : kanaal === "mail" && ((a("cc") && !adresLijst(a("cc"))) || (a("bcc") && !adresLijst(a("bcc")))) ? "cc of bcc bevat geen geldige adressen"
       : "";
     if (weiger) { knop.disabled = true; status.textContent = weiger; return; }
 
@@ -131,8 +161,14 @@
       if (!v.channel || !v.to) { status.textContent = "kaart mist kanaal of ontvanger"; return; }
       knop.disabled = true; status.textContent = "vastleggen…";
       post("/send-approve", { page: page(), key: key, channel: v.channel, to: v.to,
-        subject: v.subject, text: v.text, html: v.html, session: v.session })
-        .then(function (j) { akkoord = { hash: j.hash, approvalId: j.approvalId }; knop.disabled = false; zetStatus("approved"); })
+        subject: v.subject, account: v.account, cc: v.cc, bcc: v.bcc, reply: v.reply,
+        text: v.text, html: v.html, session: v.session })
+        .then(function (j) {
+          akkoord = { hash: j.hash, approvalId: j.approvalId }; knop.disabled = false; zetStatus("approved");
+          // Mail gaat als platte tekst in vaste HTML: vet, links en lijsten gaan niet mee.
+          if (v.channel === "mail" && /<(?:b|strong|i|em|u|a|ul|ol|li|h\d)\b/i.test(v.html))
+            status.textContent += " Let op: opmaak op de kaart gaat niet mee, alleen de tekst.";
+        })
         .catch(function (e) { knop.disabled = false; status.textContent = "niet vastgelegd: " + e.message; });
     });
 
@@ -150,7 +186,12 @@
       if (e.status === "approved") {
         var v = velden(kaart, box);
         // Tekst op de pagina moet nog steeds dezelfde zijn als wat goedgekeurd is.
-        if (v.text === e.text && v.to === e.to && v.channel === e.channel && (v.subject || "") === (e.subject || "")) {
+        var mail = v.channel === "mail", zelfde = function (k) {
+          var x = v[k] || "", y = e[k] || "";
+          return mail && (k === "to" || k === "cc" || k === "bcc") ? adressen(x) === adressen(y)
+            : mail && k === "account" ? x.trim().toLowerCase() === y : x === y;
+        };
+        if (["text", "to", "channel", "subject", "account", "cc", "bcc", "reply"].every(zelfde)) {
           akkoord = { hash: e.hash, approvalId: e.approvalId }; zetStatus("approved");
         } else { akkoord = { hash: e.hash }; trekIn("pagina-tekst wijkt af van het akkoord"); }
       } else zetStatus(e.status, e);

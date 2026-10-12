@@ -6,6 +6,78 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Per-user config file `~/.config/html-annotator/config.json`
+  (`$XDG_CONFIG_HOME` respected, `%APPDATA%\html-annotator\config.json` on
+  Windows) with the optional keys `port`, `host` and `pages_root`.
+  Precedence: environment > config file > default.
+- `pick-port [--port N]`: chooses a port (8791–8890, a port where the bridge
+  already answers counts as good, the OS picks when all are taken) and stores
+  it in the config file. Run it after installing.
+- `url --base` prints only the bridge's base URL, for `curl` and scripts.
+- `HTML_ANNOTATOR_HOST`: opt-in bind address (for example `0.0.0.0` in a
+  container). URLs, `/ping` and the bridge's own origins stay on 127.0.0.1;
+  a non-loopback bind logs a warning.
+- `HTML_ANNOTATOR_PAGES_ROOT`: the directory `/p/` serves from (default:
+  home). `url` maps against the same root; the dotfile, symlink and file
+  type rules hold relative to it.
+- Docker/WSL section in `INSTALL.md`; criteria B31–B39;
+  `tests/test_poort_config.py` (CI on all three OSes) and
+  `tests/case-19-dynamische-poort.mjs`.
+- Config key `signed_group_message` (optional): a send-gate exception for one
+  WhatsApp group whose messages an external verifier signs. Jid, verifier
+  path, module and label come from the config file; without the key the
+  gate behaves as before (B40).
+- `/ping` also returns the bridge's `pid`.
+
+### Changed
+
+- `ensure` exits 1 when the configured port is taken by something that is
+  not the bridge, and says to run `pick-port`. It never moves to another
+  port on its own (B12).
+- `references/checklist-snippet.html` talks to the origin that served the
+  `/p/` page instead of a fixed `http://127.0.0.1:8791`, like the annotator
+  snippet; `file://` still falls back to 8791.
+- `bin/wacht-op-verstuur.py` takes the bridge from the `--page` URL, or
+  from the config, instead of `HTML_ANNOTATOR_PORT`/8791.
+- Agent docs (`SKILL.md`, the handbook, `README.md`, `INSTALL.md`): agents
+  never build a `/p/` URL themselves; `url <file>` and `url --base` print it.
+- `url <file>` on a hidden path (a part starting with `.`) or outside the
+  pages root now exits 1 with an error, instead of printing a link the
+  bridge would refuse anyway.
+- An invalid port (for example `70000`) in `HTML_ANNOTATOR_PORT` or in the
+  config file is ignored with a warning on stderr; the next source wins.
+- `pick-port` never overwrites a config file it cannot read or parse: exit
+  2 with the file and the problem; repair or remove it (B35).
+- `write_config` runs read-modify-write under a lock file next to the
+  config (`fcntl.flock` / `msvcrt.locking`): concurrent writers keep each
+  other's keys (B36).
+- `ensure` runs under a per-port lock in the state dir, so concurrent ensures
+  start one bridge; the pid file is written only once the started process is
+  the one answering `/ping`, so `stop` stops the real bridge (B37).
+- `ensure` and `pick-port` also recognise a running bridge that still
+  answers `/ping` with the pre-rename name `luc-annotator` (B38).
+- The bridge maps a page to its file via `/p/` only for its own URLs
+  (http(s), loopback host, its own port); `file://` pages and other sites
+  use `pageFile` as before (B39).
+- Send gate: mail tools on any `ms365` or `ms365-<name>` server are gated
+  (the sender account in the hash decides, not the server name). Before,
+  only a fixed list of server names was; others got no verdict at all.
+
+### Migration notes
+
+- **Send button for mail.** The watcher picks the MCP server per sender
+  account from `mail_servers` in the config file. Without it every mail card
+  ends in "vraag de reviewer in de chat". Add it once, for example
+  `{"mail_servers": {"owner@example.com": "ms365"}}`.
+- **Signed group message.** An installation that wants a pre-signed group
+  message to pass without the button needs the `signed_group_message` key
+  (see `INSTALL.md`), for example
+  `{"signed_group_message": {"jid": "120363000000000000@g.us", "verifier":
+  "~/path/to/verifier-repo", "module": "package.module", "label": "example
+  signed message"}}`. Without it that message gets the normal gate (ask).
+
 ## [1.0.0rc1] — 2026-09-17
 
 First release candidate as an installable package. Everything below is the

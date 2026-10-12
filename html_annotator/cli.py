@@ -8,6 +8,8 @@
     resolve          mark annotations as processed
     apply-hunk       apply single blocks of a draft edit
     url PATH         print the http://127.0.0.1:<port>/p/... URL for a file
+    url --base       print only the base URL (http://127.0.0.1:<port>)
+    pick-port        choose a free port (8791-8890) and store it in the config file
     install-skill    put this checkout at ~/.claude/skills/html-annotator
     install-hooks    register the SessionStart + PostToolUse hooks
     --version        print the version and exit
@@ -54,7 +56,13 @@ def _p(argv=None):
     sub.add_parser("apply-hunk", help="apply blocks of a draft edit", add_help=False)
 
     u = sub.add_parser("url", help="print the /p/ URL for a local file")
-    u.add_argument("path")
+    u.add_argument("path", nargs="?")
+    u.add_argument("--base", action="store_true",
+                   help="print only the base URL of the bridge")
+
+    pp = sub.add_parser("pick-port", help="choose a port and store it in the config file")
+    pp.add_argument("--port", default=None,
+                    help="store this port instead of searching (1-65535)")
 
     isk = sub.add_parser("install-skill", help="install into ~/.claude/skills")
     isk.add_argument("--copy", action="store_true",
@@ -116,12 +124,27 @@ def main(argv=None):
         return 0 if uit.get("ok") else 1
 
     if cmd == "url":
+        if a.base:
+            print(config.base_url())
+            return 0
+        if not a.path:
+            print("url: give a PATH, or --base", file=sys.stderr)
+            return 2
         try:
             print(service.url_for(a.path))
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 1
         return 0
+
+    if cmd == "pick-port":
+        code, bericht, waarschuwing = service.pick_port(a.port)
+        if bericht:
+            print(bericht)
+        if waarschuwing:
+            soort = "warning: " if code == 0 else "error: "
+            print(soort + waarschuwing.replace("\n", "\n" + soort), file=sys.stderr)
+        return code
 
     if cmd == "install-skill":
         code, bericht = install.install_skill(kopie=a.copy or None)

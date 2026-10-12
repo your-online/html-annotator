@@ -59,6 +59,10 @@ def start_bridge(root, poort):
     env = os.environ.copy()
     env["HTML_ANNOTATOR_PORT"] = str(poort)
     env["HTML_ANNOTATOR_ROOT"] = root
+    # Geen persoonlijk configbestand (pages_root, host) in de contracttest.
+    env["XDG_CONFIG_HOME"] = env["APPDATA"] = os.path.join(root, "cfg")
+    for k in ("HTML_ANNOTATOR_HOST", "HTML_ANNOTATOR_PAGES_ROOT"):
+        env.pop(k, None)
     env["PYTHONPATH"] = SKILL + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     log = open(os.path.join(root, "bridge-test.log"), "w+", encoding="utf-8")
     proc = subprocess.Popen(

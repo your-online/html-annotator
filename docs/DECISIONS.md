@@ -119,7 +119,7 @@ byte-identical.
 
 `install.sh` does not install memories. Agent rules live in `SKILL.md`
 and `references/`. Existing project `MEMORY.md` rules are not deleted.
-`extras/luc-memories/` was removed (the plan said move). Source: this
+The personal memories folder (kept outside the repo) was removed (the plan said move). Source: this
 cleanup, "it may change drastically". Content remains in git at
 `472cf63`.
 
@@ -332,3 +332,74 @@ nastap én de SessionStart-bridge-hook draaiden niet vanuit `~/Desktop`). `insta
 daarom naar `~/.claude/settings.json`. De bevestiging na Verstuur is geen `window.confirm()` meer
 maar een inline "Zeker? [Nee, cancel] [Ja, verstuur]" onder de knop, zodat hij ook in de Claude
 Desktop-sideviewer werkt (gemeten: die laadt de `/p/`-pagina niet in een frame).
+
+## 2026-10-12 — Poort, bind-adres en pagina-root per gebruiker instelbaar
+
+Aanleiding: een gebruiker draait de bridge in Docker binnen WSL op Windows
+(0.0.0.0 nodig, pagina's op een mount), en de skill moet bij een heel team
+installeerbaar zijn zonder handwerk, ook als 8791 al bezet is.
+
+- **Configbestand per gebruiker**, `~/.config/html-annotator/config.json`
+  (`$XDG_CONFIG_HOME` gerespecteerd; Windows `%APPDATA%\html-annotator\`),
+  optionele sleutels `port`, `host`, `pages_root`. Voorrang: env
+  (`HTML_ANNOTATOR_*`, plus de bestaande `LUC_ANNOTATOR_*`-aliassen) >
+  configbestand > standaard (8791, 127.0.0.1, home). `config.port()`,
+  `host()` en `pages_root()` zijn de enige bron. Kapot bestand: negeren met
+  een waarschuwing op stderr; een configfout mag de bridge niet tegenhouden.
+- **`pick-port`** probeert 8791–8890 door echt te binden op het ingestelde
+  bind-adres (en meteen los te laten) plus een connect-check; eerste vrije
+  wint. Een poort waarop onze eigen bridge antwoordt (`/ping` →
+  `"bridge": "html-annotator"`) telt als goed, en de al geconfigureerde
+  poort blijft staan als onze bridge daar draait, zodat een herhaalde
+  pick-port geen draaiende bridge wees maakt. Alles bezet: de OS kiest
+  (bind op 0). Schrijft alleen `port`, atomisch, andere sleutels blijven.
+  `--port N` valideert 1–65535 en waarschuwt alleen bij een vreemde
+  bezetter. De reeks is in tests te verleggen met
+  `HTML_ANNOTATOR_PORT_RANGE`; dat is een test-hook, geen gebruikersinstelling.
+- **`ensure` wijkt nooit stil uit.** Bezet door iets anders dan de bridge:
+  exit 1 met de poort en "run `python -m html_annotator pick-port`".
+  Stil uitwijken zou de URL's in al uitgedeelde links en open tabbladen
+  ongeldig maken zonder dat iemand het merkt. Een bridge die nog opstart
+  telt als de bridge (ensure wacht op zijn `/ping`). De melding is Engels,
+  zoals alle CLI-uitvoer sinds 2026-09-17.
+- **Bind-adres opt-in** via `HTML_ANNOTATOR_HOST` / `host`. Alleen de socket
+  verandert: `base_url()`, de URL's van `url`, de ping en de eigen origins in
+  de bridge blijven 127.0.0.1/localhost op de actuele poort (0.0.0.0 in een
+  URL werkt niet, en de bridge zou zijn eigen pagina's weigeren). Bij een
+  niet-loopback-adres logt de bridge een `WARNING`. Host- en Origin-check
+  blijven alleen loopback toelaten (2026-09-26).
+- **Pagina-root** via `HTML_ANNOTATOR_PAGES_ROOT` / `pages_root`, standaard
+  home. `/p/` en `python -m html_annotator url` gebruiken allebei
+  `config.pages_root()`. De bestaande regels gelden ten opzichte van die
+  root: niets erbuiten, geen dotfiles of dot-mappen (ook niet via symlink),
+  alleen de types uit `P_SOORTEN`. De bridge leidt het bestand van een
+  `/p/`-pagina af uit de URL en de root, omdat het snippet als `pageFile`
+  `~/<pad>` stuurt, wat alleen klopt zolang de root home is.
+- **Agents bouwen geen URL meer zelf**: altijd `url <bestand>` of
+  `url --base` (nieuw). 8791 blijft de standaard en staat zo in de docs.
+- **file://-fallback**: annotator- en checklist-snippet praten via `/p/` met
+  `location.origin`; als bestand geopend vallen ze terug op
+  `http://127.0.0.1:8791`. Best effort: Chrome blokkeert file:// naar
+  loopback toch al (Private Network Access); de route blijft `/p/`.
+- **Na de weerleggingsrondes (zelfde dag).** `pick-port` overschrijft een
+  kapot configbestand niet meer (eerder las `write_config` het als `{}` en
+  schreef dan alleen `port` terug: andere sleutels weg); lezen voor de bridge
+  blijft wel tolerant. `write_config` draait onder een lock
+  (`config.json.lock`), want gelijktijdige schrijvers verloren sleutels (12
+  van 20 in een proef). `ensure` draait onder een lock per poort in de
+  state-dir en schrijft het pid-bestand pas als het gestarte proces zelf op
+  `/ping` antwoordt (`/ping` geeft nu `pid`): eerder wees het pid-bestand
+  soms naar het verliezende, al gestopte proces en loog `stop`. Gekozen
+  boven "de bridge schrijft zijn eigen pid-bestand", omdat dan ook een met
+  de hand gestarte `serve` door `stop` geraakt zou worden. De lockfiles
+  blijven staan: weghalen is racy. Herkenning van de eigen bridge accepteert
+  ook de oude naam `luc-annotator`, anders gaf een nog draaiende oude bridge
+  na een update "taken … pick-port". De `/p/`-afleiding van het paginabestand
+  geldt alleen nog voor eigen http(s)-URL's (loopback, eigen poort).
+- **Geen persoonlijke data in de repo.** Een gate-uitzondering voor één
+  ondertekend groepsbericht loopt alleen via de
+  optionele config-sleutel `signed_group_message` (zonder sleutel: geen
+  uitzondering). De lijst met mailservers in de gate is generiek
+  (`ms365` of `ms365-<naam>`): de afzender zit in de hash, de server niet, en
+  een server buiten de oude lijst kreeg voorheen helemaal geen oordeel.
+  Testdata, voorbeelden en docs gebruiken verzonnen namen en adressen.

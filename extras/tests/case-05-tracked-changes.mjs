@@ -1,4 +1,4 @@
-/* AC-5: Luc herschrijft de tekst van een conceptbericht rechtstreeks in de kaart, en dat
+/* AC-5: de reviewer herschrijft de tekst van een conceptbericht rechtstreeks in de kaart, en dat
    verschil komt als bewerking op schijf te staan — met voor, na en de losse wijzigingen,
    zodat een agent niet hoeft te raden wat er moet veranderen.
 
@@ -6,7 +6,7 @@
    de bridge bereikbaar is, maar of de diff klopt en of hij een reload overleeft. Het
    bewijs komt uit een ander systeem dan de pagina: annotations.json op schijf.
 
-   Draait in systeem-Chrome via de bridge (/p/), want dat is de route waarlangs Luc de
+   Draait in systeem-Chrome via de bridge (/p/), want dat is de route waarlangs de reviewer de
    pagina echt opent — gemeten in AC-4. */
 
 import { chromium } from 'playwright-core';
@@ -27,7 +27,7 @@ const ORIGINEEL = `Hi Alex,
 Ik wil even bijpraten over de security-afscherming.
 
 Groet,
-Luc`;
+Sam`;
 
 const slug = `zz-test-tracked-${Date.now()}`;
 const bestand = join(homedir(), 'Desktop', `${slug}.html`);
@@ -50,7 +50,7 @@ const page = await browser.newPage();
 await page.goto(url, { waitUntil: 'load' });
 await page.waitForSelector('.la-draft-txt.la-bewerkbaar', { timeout: 5000 });
 
-// 1. Luc klikt in de tekst en herschrijft een zin — geen knop, direct typen
+// 1. De reviewer klikt in de tekst en herschrijft een zin — geen knop, direct typen
 await page.click('.la-draft-txt');   // klikken in de tekst zet de cursor
 const NIEUW = ORIGINEEL.replace('Ik wil even bijpraten over de security-afscherming.',
   'Kunnen we deze week de security-afscherming doornemen?');
@@ -116,13 +116,13 @@ if (opSchijf) {
   // Niet toetsen op een percentage — bij het herschrijven van een hele zin verandert
   // terecht veel — maar op tekst die aantoonbaar níet is aangeraakt: aanhef en afsluiting.
   const gelijk = (opSchijf.diff || []).filter((o) => o.op === '=').map((o) => o.t).join('');
-  zeg(/Hi Alex,/.test(gelijk) && /Groet,/.test(gelijk) && /Luc/.test(gelijk),
+  zeg(/Hi Alex,/.test(gelijk) && /Groet,/.test(gelijk) && /Sam/.test(gelijk),
     'aanhef en afsluiting staan als onveranderd in de diff, niet als vervangen');
 }
 
 // 3b. Terugklikken terwijl de doorhaling zichtbaar is. Dit is het geval waar het
 // misging: de doorgehaalde tekst verdwijnt, de regel loopt anders, en de cursor van de
-// browser landt naast de plek waar Luc klikte. Het klikpunt moet op dezelfde regel
+// browser landt naast de plek waar de reviewer klikte. Het klikpunt moet op dezelfde regel
 // liggen als de wijziging en erna: alleen daar verschuift de tekst echt. Een punt op een
 // latere regel is ongevoelig — dat bleek toen de mutatie "omrekening uit" gewoon groen
 // bleef met "Groet," als doel.
@@ -158,7 +158,7 @@ if (!punt) {
   await sleep(1500);
 }
 
-// 4. overleeft het een reload? Anders is Lucs werk weg zodra hij ververst.
+// 4. overleeft het een reload? Anders is het werk van de reviewer weg na verversen.
 await page.reload({ waitUntil: 'load' });
 await sleep(2500);
 await page.click('.la-draft-diff');
