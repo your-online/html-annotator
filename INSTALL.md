@@ -168,10 +168,11 @@ default.
 | `HTML_ANNOTATOR_PORT` | `port` | port of the bridge | `8791` |
 | `HTML_ANNOTATOR_HOST` | `host` | address the bridge binds to | `127.0.0.1` |
 | `HTML_ANNOTATOR_PAGES_ROOT` | `pages_root` | directory `/p/` serves pages from | home directory |
-| `HTML_ANNOTATOR_ROOT` | – | where rounds are written | `~/annotations` |
+| `HTML_ANNOTATOR_ROOT` | `root` | where rounds are written | `~/annotations` |
 | – | `mail_servers` | sender account → MCP server for the Send button, e.g. `{"you@example.com": "ms365"}` | none (mail cards then fall back to asking in chat) |
 | – | `signed_group_message` | optional send-gate exception for one WhatsApp group whose messages an external verifier signs: `{"jid": "120363000000000000@g.us", "verifier": "~/path/to/verifier-repo", "module": "package.module", "label": "example signed message"}` (see `docs/verstuur-knop-onderzoek.md`) | none (no exception: the normal gate) |
 | `HTML_ANNOTATOR_CHROME` | – | browser used for crops | auto-detected |
+| `HTML_ANNOTATOR_CHROME_NO_SANDBOX` | `chrome_no_sandbox` | `1` / `true`: start that browser with `--no-sandbox`, also when not root | off (only as root) |
 
 The config file is `~/.config/html-annotator/config.json`
 (`$XDG_CONFIG_HOME/html-annotator/config.json` if that is set,

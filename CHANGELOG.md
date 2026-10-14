@@ -34,6 +34,8 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1`): start the screenshot browser with
   `--no-sandbox` also when not running as root, for a container that drops
   all capabilities (B41).
+- Config key `root`: where rounds are written, like `HTML_ANNOTATOR_ROOT`,
+  which still wins (B31).
 
 ### Changed
 

@@ -12,7 +12,7 @@ work, so an existing install keeps running:
     HTML_ANNOTATOR_CHROME_NO_SANDBOX  1: start that browser with --no-sandbox
 
 The config file (``config_file()``) holds the optional keys ``port``, ``host``,
-``pages_root`` and ``chrome_no_sandbox``; ``python -m html_annotator pick-port``
+``pages_root``, ``root`` and ``chrome_no_sandbox``; ``python -m html_annotator pick-port``
 writes ``port``.
 ``base_url()`` always uses 127.0.0.1, also when the bridge binds to 0.0.0.0:
 the host is where the bridge listens, not the address a browser uses.
@@ -292,6 +292,9 @@ def port_range():
 
 def root():
     waarde = env("HTML_ANNOTATOR_ROOT", "LUC_ANNOTATOR_ROOT")
+    if not waarde:
+        uit_bestand = read_config().get("root")
+        waarde = uit_bestand if isinstance(uit_bestand, str) and uit_bestand.strip() else None
     return Path(os.path.expanduser(waarde)) if waarde else default_root()
 
 

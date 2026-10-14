@@ -423,3 +423,7 @@ alle capabilities weg (`--cap-drop=ALL`) en `sleep infinity` als PID 1.
   `sleep infinity` nooit. Op Linux leest `pid_alive()` nu ook de status uit
   `/proc/<pid>/stat`. De zombie zelf kan de skill niet opruimen; daarvoor is
   `docker run --init`.
+- **Annotatiemap ook in het configbestand** (`root`), naast
+  `HTML_ANNOTATOR_ROOT`. In een container met de pagina's op een mount wil
+  je de rondes daar ook, en met alleen een env-variabele stonden de
+  instellingen op twee plekken. Zelfde voorrang als de andere sleutels.

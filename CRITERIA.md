@@ -381,11 +381,13 @@ send `null` from a sandboxed iframe.
 
 *TESTED · platform: all*
 
-*Expected behaviour:* port, bind address and pages root come from the
-environment (`HTML_ANNOTATOR_PORT` or the `LUC_ANNOTATOR_PORT` alias,
-`HTML_ANNOTATOR_HOST`, `HTML_ANNOTATOR_PAGES_ROOT`), then from
+*Expected behaviour:* port, bind address, pages root and annotation root
+come from the environment (`HTML_ANNOTATOR_PORT` or the
+`LUC_ANNOTATOR_PORT` alias, `HTML_ANNOTATOR_HOST`,
+`HTML_ANNOTATOR_PAGES_ROOT`, `HTML_ANNOTATOR_ROOT`), then from
 `config.json` in `$XDG_CONFIG_HOME/html-annotator/` (`~/.config`, or
-`%APPDATA%` on Windows), then from the defaults 8791, 127.0.0.1 and home.
+`%APPDATA%` on Windows), then from the defaults 8791, 127.0.0.1, home and
+`~/annotations`.
 Without a file and without env the behaviour is unchanged. A broken file
 gives the defaults plus a warning on stderr, never a crash. Writing the
 file keeps other keys and leaves no tmp behind. `base_url()` uses

@@ -204,10 +204,12 @@ def config_checks():
 
         paginas = tempfile.mkdtemp(prefix="ann-pag-")
         config.write_config({"port": 9101, "host": "0.0.0.0", "pages_root": paginas,
-                             "eigen": "blijft"})
+                             "root": "~/ann-uit-bestand", "eigen": "blijft"})
         n += check("B31 bestand zet port/host/pages_root",
                    config.port() == 9101 and config.host() == "0.0.0.0"
                    and config.pages_root() == config.Path(paginas).resolve())
+        n += check("B31 bestand zet root",
+                   config.root() == config.Path.home() / "ann-uit-bestand", str(config.root()))
         n += check("B31 base_url blijft 127.0.0.1 bij host 0.0.0.0",
                    config.base_url() == "http://127.0.0.1:9101", config.base_url())
 
@@ -226,11 +228,13 @@ def config_checks():
         os.environ["HTML_ANNOTATOR_PORT"] = "9104"
         os.environ["HTML_ANNOTATOR_HOST"] = "127.0.0.2"
         os.environ["HTML_ANNOTATOR_PAGES_ROOT"] = tmp
+        os.environ["HTML_ANNOTATOR_ROOT"] = tmp
         n += check("B31 env wint van het bestand",
                    config.port() == 9104 and config.host() == "127.0.0.2"
-                   and config.pages_root() == config.Path(tmp).resolve())
+                   and config.pages_root() == config.Path(tmp).resolve()
+                   and config.root() == config.Path(tmp))
         for k in ("LUC_ANNOTATOR_PORT", "HTML_ANNOTATOR_PORT", "HTML_ANNOTATOR_HOST",
-                  "HTML_ANNOTATOR_PAGES_ROOT"):
+                  "HTML_ANNOTATOR_PAGES_ROOT", "HTML_ANNOTATOR_ROOT"):
             os.environ.pop(k)
 
         with open(str(pad), "w", encoding="utf-8") as f:
