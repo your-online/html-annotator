@@ -166,7 +166,16 @@ def pid_alive(pid):
         os.kill(pid, 0)
     except OSError:
         return False
-    return True
+    return not is_zombie(pid)
+
+
+def is_zombie(pid):
+    try:
+        with open("/proc/%d/stat" % pid, encoding="ascii", errors="replace") as f:
+            status = f.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return status == "Z"
 
 
 def _spawn(poort=None):

@@ -24,7 +24,7 @@ from contextlib import redirect_stderr
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SKILL)
 
-from html_annotator import config  # noqa: E402
+from html_annotator import config, service  # noqa: E402
 
 ENV_NAMEN = ("HTML_ANNOTATOR_PORT", "LUC_ANNOTATOR_PORT", "HTML_ANNOTATOR_HOST",
              "HTML_ANNOTATOR_PAGES_ROOT", "HTML_ANNOTATOR_PORT_RANGE",
@@ -545,19 +545,6 @@ def lees_pid(om, poort):
         return None
 
 
-def leeft(pid):
-    if not pid:
-        return False
-    if os.name == "nt":
-        r = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid], capture_output=True, text=True)
-        return str(pid) in (r.stdout or "")
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
 def robuustheid_checks():
     n = 0
     om = Omgeving()
@@ -613,7 +600,7 @@ def robuustheid_checks():
         rc, uit, err = om.cli("stop")
         time.sleep(0.3)
         n += check("B37 stop stopt de luisterende bridge echt",
-                   rc == 0 and ping(f) is None and not leeft(info.get("pid")), uit + err)
+                   rc == 0 and ping(f) is None and not service.pid_alive(info.get("pid")), uit + err)
 
         # B38: een draaiende bridge van vóór de hernoeming telt als de onze.
         g = vrij_blok(1)

@@ -282,6 +282,14 @@ with the browser on the host. Three things differ from a local install:
   `pick-port` search inside a container, it only sees the container's ports.
 - **Pages root on a mount:** mount the directory with your pages and point
   `HTML_ANNOTATOR_PAGES_ROOT` at it; `/p/<path>` is then relative to that mount.
+- **Screenshot browser without root:** a container that runs as a normal user
+  with all capabilities dropped gives Chrome no usable sandbox ("No usable
+  sandbox!"), and region annotations land without a screenshot. Set
+  `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1` or `"chrome_no_sandbox": true` in the
+  config file; as root the bridge adds `--no-sandbox` by itself. Without an
+  init process as PID 1 (`docker run` without `--init`) a stopped bridge
+  stays behind as a zombie; the bridge treats that as stopped, `--init`
+  cleans it up.
 
 ```bash
 docker run -p 127.0.0.1:8791:8791 \

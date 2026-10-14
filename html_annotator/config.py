@@ -9,9 +9,11 @@ work, so an existing install keeps running:
     HTML_ANNOTATOR_PAGES_ROOT  directory /p/ serves pages from (default: home)
     HTML_ANNOTATOR_ROOT        where rounds are written (default ~/annotations)
     HTML_ANNOTATOR_CHROME      browser used for screenshot crops
+    HTML_ANNOTATOR_CHROME_NO_SANDBOX  1: start that browser with --no-sandbox
 
-The config file (``config_file()``) holds the optional keys ``port``, ``host``
-and ``pages_root``; ``python -m html_annotator pick-port`` writes ``port``.
+The config file (``config_file()``) holds the optional keys ``port``, ``host``,
+``pages_root`` and ``chrome_no_sandbox``; ``python -m html_annotator pick-port``
+writes ``port``.
 ``base_url()`` always uses 127.0.0.1, also when the bridge binds to 0.0.0.0:
 the host is where the bridge listens, not the address a browser uses.
 
@@ -244,6 +246,13 @@ def host():
     if isinstance(waarde, str) and waarde.strip():
         return waarde.strip()
     return DEFAULT_HOST
+
+
+def chrome_no_sandbox():
+    waarde = env("HTML_ANNOTATOR_CHROME_NO_SANDBOX")
+    if waarde:
+        return waarde.strip().lower() in ("1", "true", "yes")
+    return read_config().get("chrome_no_sandbox") is True
 
 
 def is_loopback(adres):

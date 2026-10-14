@@ -90,7 +90,8 @@ def chrome_vlaggen():
     vlaggen = ["--headless=new", "--disable-gpu", "--hide-scrollbars",
                "--no-first-run", "--no-default-browser-check",
                "--allow-file-access-from-files", "--disable-dev-shm-usage"]
-    if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0:
+    draait_als_root = os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0
+    if draait_als_root or config.chrome_no_sandbox():
         vlaggen.append("--no-sandbox")
     return vlaggen
 

@@ -403,3 +403,23 @@ installeerbaar zijn zonder handwerk, ook als 8791 al bezet is.
   (`ms365` of `ms365-<naam>`): de afzender zit in de hash, de server niet, en
   een server buiten de oude lijst kreeg voorheen helemaal geen oordeel.
   Testdata, voorbeelden en docs gebruiken verzonnen namen en adressen.
+
+## 2026-10-14 — Container zonder root en zonder init
+
+Aanleiding: de bridge in een container die als gewone gebruiker draait met
+alle capabilities weg (`--cap-drop=ALL`) en `sleep infinity` als PID 1.
+
+- **`--no-sandbox` opt-in** via `HTML_ANNOTATOR_CHROME_NO_SANDBOX` /
+  `chrome_no_sandbox`, zoals het bind-adres. Chrome vindt daar geen bruikbare
+  sandbox en stopt; de screenshot ontbreekt dan. Niet automatisch bij
+  "draait in een container": de browser rendert alleen eigen lokale pagina's,
+  maar zonder sandbox is de container de enige grens, en dat kiest de
+  eigenaar. Alleen de sleutel `true` telt, zodat een tikfout niet stil aan
+  zet. Een wrapper-script rond chromium kan hetzelfde, maar is per machine
+  handwerk buiten de skill.
+- **Zombie telt als gestopt.** `pid_alive()` keek met `kill(pid, 0)`; dat
+  slaagt ook voor een proces dat al gestopt is maar nog niet opgeruimd. De
+  bridge start losgekoppeld, dus na `stop` ruimt PID 1 hem op, en dat doet
+  `sleep infinity` nooit. Op Linux leest `pid_alive()` nu ook de status uit
+  `/proc/<pid>/stat`. De zombie zelf kan de skill niet opruimen; daarvoor is
+  `docker run --init`.

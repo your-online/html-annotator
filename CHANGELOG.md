@@ -30,9 +30,16 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   path, module and label come from the config file; without the key the
   gate behaves as before (B40).
 - `/ping` also returns the bridge's `pid`.
+- Opt-in `chrome_no_sandbox` (config key, or
+  `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1`): start the screenshot browser with
+  `--no-sandbox` also when not running as root, for a container that drops
+  all capabilities (B41).
 
 ### Changed
 
+- `stop`, `ensure` and `status` count a zombie process (exited, not yet
+  reaped) as gone. In a container whose PID 1 is not an init process, `stop`
+  reported "pid … is still alive" for a bridge that had stopped (B42).
 - `ensure` exits 1 when the configured port is taken by something that is
   not the bridge, and says to run `pick-port`. It never moves to another
   port on its own (B12).

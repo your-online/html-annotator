@@ -542,6 +542,33 @@ throwaway verifier module.
 
 </details>
 
+<details><summary><strong>B41 — <code>--no-sandbox</code> for the screenshot browser is opt-in configuration.</strong></summary>
+
+*TESTED · platform: all (skips when the test runs as root)*
+
+*Expected behaviour:* without a setting the browser gets `--no-sandbox`
+only when the bridge runs as root. With the config key
+`chrome_no_sandbox: true` or `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1` it gets
+the flag as any user; the environment wins over the config file, and a
+key that is not `true` counts as off.
+
+*Evidence:* `tests/test_container.py`.
+
+</details>
+
+<details><summary><strong>B42 — A zombie process is not a running bridge.</strong></summary>
+
+*TESTED · platform: Linux (skips without <code>/proc</code>)*
+
+*Expected behaviour:* a process that has exited but is not yet reaped
+(state `Z` in `/proc/<pid>/stat`) counts as not alive, so `stop` succeeds
+in a container whose PID 1 never reaps orphans.
+
+*Evidence:* `tests/test_container.py`; `tests/test_poort_config.py` (B32,
+B37) in such a container.
+
+</details>
+
 <details><summary><strong>B23 — Region and text boxes scroll with the HTML they mark, including inside an <code>overflow:auto</code> scroller.</strong></summary>
 
 *TESTED · platform: posix*
