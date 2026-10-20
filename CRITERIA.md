@@ -592,6 +592,20 @@ re-enable fails); `tests/test_poort_config.py` (B43).
 
 </details>
 
+<details><summary><strong>B46 — A rich draft edit keeps its formatting after a reload.</strong></summary>
+
+*TESTED · platform: posix (browser)*
+
+*Expected behaviour:* when the page takes over the open annotations from the
+bridge (`/session`), an edit annotation keeps `origineelHtml`, `nieuwHtml`
+and `rijk`. After a reload the draft card shows the saved edit with its
+lists and paragraphs, not the flat text projection.
+
+*Evidence:* `tests/case-24-rijk-herstel.mjs` (mutant without the three
+fields in `uitBridge` fails).
+
+</details>
+
 <details><summary><strong>B23 — Region and text boxes scroll with the HTML they mark, including inside an <code>overflow:auto</code> scroller.</strong></summary>
 
 *TESTED · platform: posix*
