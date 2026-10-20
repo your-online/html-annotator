@@ -10,9 +10,10 @@ work, so an existing install keeps running:
     HTML_ANNOTATOR_ROOT        where rounds are written (default ~/annotations)
     HTML_ANNOTATOR_CHROME      browser used for screenshot crops
     HTML_ANNOTATOR_CHROME_NO_SANDBOX  1: start that browser with --no-sandbox
+    HTML_ANNOTATOR_CONTINUOUS_SELECT  0: region mode switches off after each Save
 
 The config file (``config_file()``) holds the optional keys ``port``, ``host``,
-``pages_root``, ``root`` and ``chrome_no_sandbox``; ``python -m html_annotator pick-port``
+``pages_root``, ``root``, ``chrome_no_sandbox`` and ``continuous_select``; ``python -m html_annotator pick-port``
 writes ``port``.
 ``base_url()`` always uses 127.0.0.1, also when the bridge binds to 0.0.0.0:
 the host is where the bridge listens, not the address a browser uses.
@@ -188,6 +189,21 @@ def config_lock_file():
     return pad.with_name(pad.name + ".lock")
 
 
+def _vervang(bron, doel, pogingen=100):
+    """os.replace, maar op Windows met herkansing: daar faalt replace met
+    PermissionError zolang een ander proces ``doel`` open heeft. Lezers
+    (read_config, ook bij elke import via PORT) nemen geen lock, dus dat gebeurt
+    bij gelijktijdige processen echt (B36 op windows-latest)."""
+    for poging in range(pogingen):
+        try:
+            os.replace(str(bron), str(doel))
+            return
+        except PermissionError:
+            if os.name != "nt" or poging == pogingen - 1:
+                raise
+            time.sleep(0.02)
+
+
 def write_config(updates):
     """Merge ``updates`` into the config file and keep the other keys.
 
@@ -203,7 +219,7 @@ def write_config(updates):
         tmp = pad.with_name(pad.name + ".%d.tmp" % os.getpid())
         try:
             tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            os.replace(str(tmp), str(pad))
+            _vervang(tmp, pad)
         finally:
             if tmp.exists():
                 tmp.unlink()
@@ -253,6 +269,20 @@ def chrome_no_sandbox():
     if waarde:
         return waarde.strip().lower() in ("1", "true", "yes")
     return read_config().get("chrome_no_sandbox") is True
+
+
+def continuous_select_from_env():
+    """True when HTML_ANNOTATOR_CONTINUOUS_SELECT is set: the config file then has no say."""
+    return bool(env("HTML_ANNOTATOR_CONTINUOUS_SELECT"))
+
+
+def continuous_select():
+    """Region mode stays on after Save, so the next region is one drag away.
+    Env HTML_ANNOTATOR_CONTINUOUS_SELECT > config file ``continuous_select`` > on."""
+    waarde = env("HTML_ANNOTATOR_CONTINUOUS_SELECT")
+    if waarde:
+        return waarde.strip().lower() not in ("0", "false", "no", "off")
+    return read_config().get("continuous_select") is not False
 
 
 def is_loopback(adres):

@@ -173,6 +173,7 @@ default.
 | – | `signed_group_message` | optional send-gate exception for one WhatsApp group whose messages an external verifier signs: `{"jid": "120363000000000000@g.us", "verifier": "~/path/to/verifier-repo", "module": "package.module", "label": "example signed message"}` (see `docs/verstuur-knop-onderzoek.md`) | none (no exception: the normal gate) |
 | `HTML_ANNOTATOR_CHROME` | – | browser used for crops | auto-detected |
 | `HTML_ANNOTATOR_CHROME_NO_SANDBOX` | `chrome_no_sandbox` | `1` / `true`: start that browser with `--no-sandbox`, also when not root | off (only as root) |
+| `HTML_ANNOTATOR_CONTINUOUS_SELECT` | `continuous_select` | region mode stays on after Save, so you select, comment, Save and select the next region without clicking *Annotate selection* again; `false` / `0`: region mode switches off after each Save. Also switchable from the settings menu (sliders button in the bar), which writes this key | on |
 
 The config file is `~/.config/html-annotator/config.json`
 (`$XDG_CONFIG_HOME/html-annotator/config.json` if that is set,

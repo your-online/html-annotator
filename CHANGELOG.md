@@ -8,6 +8,16 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Continuous select (`continuous_select` in the config file,
+  `HTML_ANNOTATOR_CONTINUOUS_SELECT` in the environment, on by default): after
+  Save the region mode stays on, so the next region is one drag away instead
+  of another click on *Annotate selection*. Set it to `false` for the old
+  behaviour. The bridge hands the setting to the page via `/session`.
+- Settings menu: a sliders button next to the status pill opens a small menu
+  with the *Continuous select* toggle. It writes `continuous_select` to the
+  config file through `POST /settings` (only from the bridge's own `/p/`
+  pages), so it applies to every page of that bridge. When the environment
+  variable is set, the toggle is locked and says why.
 - Per-user config file `~/.config/html-annotator/config.json`
   (`$XDG_CONFIG_HOME` respected, `%APPDATA%\html-annotator\config.json` on
   Windows) with the optional keys `port`, `host` and `pages_root`.
