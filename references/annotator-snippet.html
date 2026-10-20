@@ -17,6 +17,18 @@
     border-radius: 6px; border: 1px solid rgba(0,0,0,.06); background: rgba(255,255,255,.72);
     color: #6a6a6a; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
   #la-status.la-uit { border-color: rgba(180,120,40,.25); background: rgba(253,243,230,.9); color: #8a4b08; cursor: help; }
+  #la-bar #la-instel { padding: 5px 6px; }
+  #la-instelmenu { position: absolute; right: 0; bottom: calc(100% + 6px); min-width: 250px; padding: 10px 12px;
+    border-radius: 8px; border: 1px solid rgba(0,0,0,.10); background: #fff; color: #2a2a2a;
+    box-shadow: 0 6px 24px rgba(0,0,0,.14); font-size: 12px; line-height: 1.4; }
+  #la-instelmenu[hidden] { display: none; }
+  #la-instelmenu .la-instel-kop { font-weight: 600; font-size: 11px; color: #777; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 8px; }
+  #la-instelmenu label { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+  #la-instelmenu input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+  #la-instelmenu input:disabled, #la-instelmenu input:disabled + * { cursor: not-allowed; }
+  #la-instelmenu .la-instel-uitleg { color: #777; font-size: 11px; margin-top: 4px; }
+  #la-instelmenu .la-instel-melding { color: #8a4b08; font-size: 11px; margin-top: 6px; }
   #la-overlay { position: fixed; inset: 0; z-index: 99998; cursor: crosshair; background: rgba(20,25,35,.06); }
   .la-ghost { position: absolute; border: 1.5px dashed #2f6bec; background: rgba(47,107,236,.12); z-index: 99998; pointer-events: none; }
   .la-ghost-vast { border-style: solid; border-width: 2px; background: rgba(47,107,236,.16); box-shadow: 0 0 0 9999px rgba(15,20,30,.10); border-radius: 2px; }
@@ -225,7 +237,7 @@
 
   /* Doorlopend selecteren (config ``continuous_select``, standaard aan): na Save
      blijft de regio-modus aan. De bridge levert de stand via /session. */
-  var doorlopend = true;
+  var doorlopend = true, doorlopendEnv = false;
   function bewaarLokaal() { try { localStorage.setItem(KEY, JSON.stringify(anns)); } catch (e) {} }
   function el(tag, css, ouder) { var d = document.createElement(tag); if (css) d.style.cssText = css; (ouder || document.body).appendChild(d); return d; }
   function slug() { return (document.title || location.pathname).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "pagina"; }
@@ -310,6 +322,7 @@
       try { localStorage.setItem(KEY + ":ronde", JSON.stringify(j.round)); } catch (e) {}
       uitBridge(j);
       if (typeof j.continuousSelect === "boolean") doorlopend = j.continuousSelect;
+      doorlopendEnv = !!j.continuousSelectEnv;
       brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
       zetStatus(true, j.count + " saved", j.jsonPath);
       return j;
@@ -333,8 +346,20 @@
     '<rect x="9" y="4.75" width="5" height="2.4" rx="0.4" fill="currentColor" opacity=".32"/>' +
     '<rect x="9" y="8.35" width="3.7" height="2.4" rx="0.4" fill="currentColor" opacity=".18"/></svg>';
   var bar = document.createElement("div"); bar.id = "la-bar";
+  var icoInstel = '<svg class="la-ico" viewBox="0 0 16 16" aria-hidden="true">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" ' +
+      'd="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/>' +
+    '<circle cx="10" cy="4.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+    '<circle cx="6" cy="11.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
   bar.innerHTML = '<span id="la-status">checking bridge...</span>' +
-    '<button id="la-toggle">' + icoRegio + 'Annotate selection</button>';
+    '<button id="la-instel" title="Settings" aria-label="Settings" aria-expanded="false">' + icoInstel + '</button>' +
+    '<button id="la-toggle">' + icoRegio + 'Annotate selection</button>' +
+    '<div id="la-instelmenu" role="dialog" aria-label="Annotator settings" hidden>' +
+      '<div class="la-instel-kop">Settings</div>' +
+      '<label><span>Continuous select</span><input type="checkbox" id="la-instel-doorlopend"></label>' +
+      '<div class="la-instel-uitleg">Region mode stays on after Save. Applies to every page of this bridge.</div>' +
+      '<div class="la-instel-melding" hidden></div>' +
+    '</div>';
   document.body.appendChild(bar);
 
   /* ---- locators + anker terugvinden ------------------------------ */
@@ -1541,6 +1566,44 @@
     });
   }
   document.getElementById("la-toggle").addEventListener("click", function () { zetModus(!overlay); });
+  /* ---- instellingenmenu (tandwiel naast de statuspil) ------------- */
+  /* De toggle schrijft via /settings naar het configbestand: hij geldt dus voor
+     de hele bridge, niet alleen voor deze pagina. Een env-variabele wint; dan
+     staat de toggle vast en zegt het menu waarom. */
+  (function () {
+    var knop = document.getElementById("la-instel");
+    var menu = document.getElementById("la-instelmenu");
+    var vink = document.getElementById("la-instel-doorlopend");
+    var melding = menu.querySelector(".la-instel-melding");
+    function meld(tekst) { melding.textContent = tekst || ""; melding.hidden = !tekst; }
+    function toon() {
+      vink.checked = doorlopend;
+      vink.disabled = !brug.ok || doorlopendEnv;
+      meld(!brug.ok ? "Bridge is off: settings cannot be saved."
+        : doorlopendEnv ? "Fixed by HTML_ANNOTATOR_CONTINUOUS_SELECT in the environment." : "");
+    }
+    function open(aan) {
+      menu.hidden = !aan;
+      knop.classList.toggle("la-aan", aan);
+      knop.setAttribute("aria-expanded", aan ? "true" : "false");
+      if (aan) toon();
+    }
+    knop.addEventListener("click", function (ev) { ev.stopPropagation(); open(menu.hidden); });
+    menu.addEventListener("click", function (ev) { ev.stopPropagation(); });
+    document.addEventListener("click", function () { if (!menu.hidden) open(false); });
+    document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !menu.hidden) open(false); });
+    vink.addEventListener("change", function () {
+      var gewenst = vink.checked;
+      vink.disabled = true;
+      post("/settings", { continuousSelect: gewenst }).then(function (j) {
+        doorlopend = !!j.continuousSelect; doorlopendEnv = !!j.continuousSelectEnv;
+        toon();
+      }).catch(function (e) {
+        vink.checked = doorlopend; vink.disabled = false;
+        meld("Not saved: " + (e && e.message ? e.message : e));
+      });
+    });
+  })();
   /* Sneltoets ⌘⇧0 (Ctrl+Shift+0): staat er tekst geselecteerd, dan is dat "Annotate selection" op de
      selectie; anders schakelt hij de regio-modus, net als de knop rechtsonder (2026-09-22). Capture-fase,
      zodat een pagina met eigen keydown-handlers hem niet wegvangt; niet in een invoerveld. */

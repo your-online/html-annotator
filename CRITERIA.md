@@ -581,6 +581,11 @@ region after region; the button still switches it off. With
 `continuous_select: false` or `HTML_ANNOTATOR_CONTINUOUS_SELECT=0` region
 mode switches off after Save, as before. The environment wins over the
 config file. `/session` returns the value as `continuousSelect`.
+The settings menu (sliders button next to the status pill) shows the
+toggle; changing it writes `continuous_select` to the config file via
+`POST /settings`, takes effect on the open page at once and on every other
+page of that bridge. `/settings` refuses any origin other than the
+bridge's own (403). With the environment variable set the toggle is locked.
 
 *Evidence:* `tests/case-22-doorlopend-selecteren.mjs` (mutant without the
 re-enable fails); `tests/test_poort_config.py` (B43).

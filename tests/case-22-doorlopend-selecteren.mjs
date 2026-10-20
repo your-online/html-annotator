@@ -72,6 +72,46 @@ try {
   await page2.click('#la-toggle');
   await regio(page2, 30, 'vier');
   zeg(!(await modusAan(page2)), 'uit: regio-modus gaat uit na Save (oude gedrag)');
+  await page2.close();
+
+  /* instellingenmenu: de toggle schrijft via /settings naar het configbestand
+     van de bridge en geldt dus voor elke pagina */
+  const page3 = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await page3.goto(url, { waitUntil: 'load', timeout: 8000 });
+  await page3.waitForFunction(() => /saved/.test(document.getElementById('la-status').textContent), null, { timeout: 5000 });
+  zeg(await page3.isHidden('#la-instelmenu'), 'menu: standaard dicht');
+  await page3.click('#la-instel');
+  zeg(await page3.isVisible('#la-instelmenu'), 'menu: tandwiel opent het menu');
+  zeg(await page3.isChecked('#la-instel-doorlopend'), 'menu: toggle staat standaard aan');
+  await page3.uncheck('#la-instel-doorlopend');
+  await page3.waitForFunction(() => !document.getElementById('la-instel-doorlopend').disabled, null, { timeout: 3000 });
+  const sessie = await page3.evaluate(async () => {
+    const r = await fetch(location.origin + '/settings', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    return r.json();
+  });
+  zeg(sessie.continuousSelect === false, 'menu: uitzetten landt in de bridge-config');
+  await page3.keyboard.press('Escape');
+  zeg(await page3.isHidden('#la-instelmenu'), 'menu: Escape sluit het menu');
+  const page4 = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await page4.goto(url, { waitUntil: 'load', timeout: 8000 });
+  await page4.waitForFunction(() => /saved/.test(document.getElementById('la-status').textContent), null, { timeout: 5000 });
+  await page4.click('#la-toggle');
+  await regio(page4, 30, 'vijf');
+  zeg(!(await modusAan(page4)), 'menu: uit geldt ook op een andere pagina (modus uit na Save)');
+  await page4.click('#la-instel');
+  await page4.check('#la-instel-doorlopend');
+  await page4.waitForFunction(() => !document.getElementById('la-instel-doorlopend').disabled, null, { timeout: 3000 });
+  await page4.click('h1, body', { position: { x: 5, y: 5 } }).catch(() => {});
+  await page4.click('#la-toggle');
+  await regio(page4, 130, 'zes');
+  zeg(await modusAan(page4), 'menu: weer aan, zonder herladen direct actief');
+
+  /* alleen de eigen /p/-pagina's van de bridge mogen de config wijzigen */
+  const vreemd = await fetch(`http://127.0.0.1:${PORT}/settings`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'http://evil.example' },
+    body: JSON.stringify({ continuousSelect: false }) });
+  zeg(vreemd.status === 403, `menu: vreemde origin geweigerd (${vreemd.status})`);
 } finally {
   if (browser) await browser.close();
   rmSync(bestand, { force: true });

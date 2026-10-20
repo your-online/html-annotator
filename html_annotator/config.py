@@ -256,6 +256,11 @@ def chrome_no_sandbox():
     return read_config().get("chrome_no_sandbox") is True
 
 
+def continuous_select_from_env():
+    """True when HTML_ANNOTATOR_CONTINUOUS_SELECT is set: the config file then has no say."""
+    return bool(env("HTML_ANNOTATOR_CONTINUOUS_SELECT"))
+
+
 def continuous_select():
     """Region mode stays on after Save, so the next region is one drag away.
     Env HTML_ANNOTATOR_CONTINUOUS_SELECT > config file ``continuous_select`` > on."""

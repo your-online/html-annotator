@@ -234,7 +234,9 @@ if wil 22; then
   else
     c22_poort=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
     c22_root=$(mktemp -d)
-    HTML_ANNOTATOR_PORT="$c22_poort" HTML_ANNOTATOR_ROOT="$c22_root" \
+    # eigen configmap: de instellingentoggle schrijft naar het configbestand
+    XDG_CONFIG_HOME="$c22_root/cfg" APPDATA="$c22_root/cfg" \
+      HTML_ANNOTATOR_PORT="$c22_poort" HTML_ANNOTATOR_ROOT="$c22_root" \
       python3 -m html_annotator serve >/tmp/ann-c22-bridge.log 2>&1 &
     c22_pid=$!
     for _ in $(seq 1 25); do

@@ -382,7 +382,8 @@ def h_session(payload):
             "annotations": open_ann,
             "exists": os.path.isfile(json_pad),
             "contentHash": h,
-            "continuousSelect": config.continuous_select()}
+            "continuousSelect": config.continuous_select(),
+            "continuousSelectEnv": config.continuous_select_from_env()}
 
 
 def h_resolve(payload):
@@ -919,13 +920,28 @@ def h_send_done(payload):
 # serveert (Origin = de bridge). "local": alleen een niet-browserproces (geen Origin):
 # een browser zet op elke cross-origin POST een Origin-header, dus een website kan
 # deze routes niet aanroepen.
-HERKOMST = {"/send-approve": "page", "/send-revoke": "page", "/send-done": "local"}
+def h_settings(payload):
+    """Instellingen van de hele bridge lezen en (optioneel) schrijven naar het
+    configbestand. Body: {} om te lezen, {"continuousSelect": true|false} om te zetten.
+    Een env-variabele wint altijd van het bestand; dat meldt continuousSelectEnv."""
+    if "continuousSelect" in payload:
+        waarde = payload["continuousSelect"]
+        if not isinstance(waarde, bool):
+            raise ValueError("continuousSelect moet true of false zijn")
+        config.write_config({"continuous_select": waarde})
+    return {"ok": True, "continuousSelect": config.continuous_select(),
+            "continuousSelectEnv": config.continuous_select_from_env(),
+            "configFile": str(config.config_file())}
+
+
+HERKOMST = {"/send-approve": "page", "/send-revoke": "page", "/send-done": "local",
+            "/settings": "page"}
 
 
 ROUTES = {"/session": h_session, "/save": h_save, "/delete": h_delete,
           "/remove-all": h_remove_all, "/resolve": h_resolve,
           "/state": h_state, "/state-save": h_state_save,
-          "/sessie": h_sessie,
+          "/sessie": h_sessie, "/settings": h_settings,
           "/send-approve": h_send_approve, "/send-revoke": h_send_revoke,
           "/send-done": h_send_done}
 
