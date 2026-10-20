@@ -571,6 +571,22 @@ B37) in such a container.
 
 </details>
 
+<details><summary><strong>B43 — Continuous select is a per-user setting, on by default.</strong></summary>
+
+*TESTED · platform: posix (browser), all (config)*
+
+*Expected behaviour:* with `continuous_select` unset or `true`, region mode
+stays on after Save of a new region: one click on *Annotate selection*, then
+region after region; the button still switches it off. With
+`continuous_select: false` or `HTML_ANNOTATOR_CONTINUOUS_SELECT=0` region
+mode switches off after Save, as before. The environment wins over the
+config file. `/session` returns the value as `continuousSelect`.
+
+*Evidence:* `tests/case-22-doorlopend-selecteren.mjs` (mutant without the
+re-enable fails); `tests/test_poort_config.py` (B43).
+
+</details>
+
 <details><summary><strong>B23 — Region and text boxes scroll with the HTML they mark, including inside an <code>overflow:auto</code> scroller.</strong></summary>
 
 *TESTED · platform: posix*

@@ -381,7 +381,8 @@ def h_session(payload):
             "maxNr": max([a.get("nr", 0) for a in lijst] or [0]),
             "annotations": open_ann,
             "exists": os.path.isfile(json_pad),
-            "contentHash": h}
+            "contentHash": h,
+            "continuousSelect": config.continuous_select()}
 
 
 def h_resolve(payload):

@@ -10,9 +10,10 @@ work, so an existing install keeps running:
     HTML_ANNOTATOR_ROOT        where rounds are written (default ~/annotations)
     HTML_ANNOTATOR_CHROME      browser used for screenshot crops
     HTML_ANNOTATOR_CHROME_NO_SANDBOX  1: start that browser with --no-sandbox
+    HTML_ANNOTATOR_CONTINUOUS_SELECT  0: region mode switches off after each Save
 
 The config file (``config_file()``) holds the optional keys ``port``, ``host``,
-``pages_root``, ``root`` and ``chrome_no_sandbox``; ``python -m html_annotator pick-port``
+``pages_root``, ``root``, ``chrome_no_sandbox`` and ``continuous_select``; ``python -m html_annotator pick-port``
 writes ``port``.
 ``base_url()`` always uses 127.0.0.1, also when the bridge binds to 0.0.0.0:
 the host is where the bridge listens, not the address a browser uses.
@@ -253,6 +254,15 @@ def chrome_no_sandbox():
     if waarde:
         return waarde.strip().lower() in ("1", "true", "yes")
     return read_config().get("chrome_no_sandbox") is True
+
+
+def continuous_select():
+    """Region mode stays on after Save, so the next region is one drag away.
+    Env HTML_ANNOTATOR_CONTINUOUS_SELECT > config file ``continuous_select`` > on."""
+    waarde = env("HTML_ANNOTATOR_CONTINUOUS_SELECT")
+    if waarde:
+        return waarde.strip().lower() not in ("0", "false", "no", "off")
+    return read_config().get("continuous_select") is not False
 
 
 def is_loopback(adres):

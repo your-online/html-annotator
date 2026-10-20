@@ -625,9 +625,38 @@ def robuustheid_checks():
     return n
 
 
+def doorlopend_checks():
+    """B43: continuous_select staat standaard aan; config-sleutel en env zetten hem."""
+    n = 0
+    bewaard = {k: os.environ.get(k) for k in ("XDG_CONFIG_HOME", "APPDATA",
+                                               "HTML_ANNOTATOR_CONTINUOUS_SELECT")}
+    tmp = tempfile.mkdtemp(prefix="ann-door-")
+    try:
+        os.environ.pop("HTML_ANNOTATOR_CONTINUOUS_SELECT", None)
+        os.environ["XDG_CONFIG_HOME"] = tmp
+        os.environ["APPDATA"] = tmp
+        n += check("B43 continuous_select standaard aan", config.continuous_select() is True)
+        config.write_config({"continuous_select": False})
+        n += check("B43 config-sleutel false zet hem uit", config.continuous_select() is False)
+        os.environ["HTML_ANNOTATOR_CONTINUOUS_SELECT"] = "1"
+        n += check("B43 env wint van het configbestand", config.continuous_select() is True)
+        os.environ["HTML_ANNOTATOR_CONTINUOUS_SELECT"] = "0"
+        config.write_config({"continuous_select": True})
+        n += check("B43 env 0 zet hem uit", config.continuous_select() is False)
+    finally:
+        for k, v in bewaard.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(tmp, ignore_errors=True)
+    return n
+
+
 def main():
     n = 0
     n += config_checks()
+    n += doorlopend_checks()
     n += pick_port_checks()
     n += host_checks()
     n += pages_root_checks()
