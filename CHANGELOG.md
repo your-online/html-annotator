@@ -97,6 +97,12 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "~/path/to/verifier-repo", "module": "package.module", "label": "example
   signed message"}}`. Without it that message gets the normal gate (ask).
 
+### Fixed
+
+- A rich draft edit (lists, paragraphs) keeps its formatting after a reload:
+  the page no longer drops `origineelHtml`, `nieuwHtml` and `rijk` when it
+  takes over the annotations from the bridge.
+
 ## [1.0.0rc1] — 2026-09-17
 
 First release candidate as an installable package. Everything below is the

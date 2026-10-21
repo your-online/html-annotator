@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runner voor de annotator-bridge-suite.
 #
-#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–19 22
+#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–19 22 24
 #                               (geen case-01 spend, geen mutate)
 #   tests/run.sh 00 09 11       # de drie cases zonder browser (ook de CI-set)
 #   tests/run.sh 02 03          # alleen deze cases
@@ -27,7 +27,7 @@ CASE01_RUNS="${CASE01_RUNS:-3}"
 GEVRAAGD=("$@")
 # Default = wat A7 van iedereen eist. case-01 (spend) en case-10 (mutatie,
 # bewust traag + eigen boom) alleen als je ze noemt.
-DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18 19 22"
+DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18 19 22 24"
 wil() {
   if [ ${#GEVRAAGD[@]} -eq 0 ]; then
     for g in $DEFAULT; do [ "$g" = "$1" ] && return 0; done
@@ -250,6 +250,34 @@ if wil 22; then
     kill "$c22_pid" 2>/dev/null || true
     wait "$c22_pid" 2>/dev/null || true
     rm -rf "$c22_root"
+  fi
+  echo
+fi
+
+if wil 24; then
+  # Eigen bridge op een vrije poort met tijdelijke root en config; raakt 8791 niet.
+  echo "case-24: rijke bewerking overleeft een reload (origineelHtml/nieuwHtml/rijk)"
+  if [ ! -d node_modules/playwright-core ]; then
+    echo "BLOKKED case-24: playwright-core ontbreekt"
+    BLOKKED=$((BLOKKED + 1))
+  else
+    c24_poort=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+    c24_root=$(mktemp -d)
+    XDG_CONFIG_HOME="$c24_root/cfg" APPDATA="$c24_root/cfg" \
+      HTML_ANNOTATOR_PORT="$c24_poort" HTML_ANNOTATOR_ROOT="$c24_root" \
+      python3 -m html_annotator serve >/tmp/ann-c24-bridge.log 2>&1 &
+    c24_pid=$!
+    for _ in $(seq 1 25); do
+      curl -s -o /dev/null --max-time 0.2 "http://127.0.0.1:$c24_poort/ping" && break
+      sleep 0.2
+    done
+    HTML_ANNOTATOR_PORT="$c24_poort" HTML_ANNOTATOR_ROOT="$c24_root" node ./case-24-rijk-herstel.mjs
+    rc=$?
+    [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))
+    [ $rc -eq 1 ] && FALEN=$((FALEN + 1))
+    kill "$c24_pid" 2>/dev/null || true
+    wait "$c24_pid" 2>/dev/null || true
+    rm -rf "$c24_root"
   fi
   echo
 fi

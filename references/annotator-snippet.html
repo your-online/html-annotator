@@ -299,6 +299,9 @@
         commentExpanded: a.commentExpanded || "", refsIncomplete: a.refsIncomplete || null,
         img: null,
         veld: a.veld || "", origineel: a.origineel || "", nieuw: a.nieuw || "",
+        /* De HTML-versies gaan mee: zonder nieuwHtml valt laHerstelBewerkingen na een
+           reload terug op de projectie, en die kent geen opsommingen. */
+        origineelHtml: a.origineelHtml || "", nieuwHtml: a.nieuwHtml || "", rijk: !!a.rijk,
         diff: a.diff || [], hunks: a.hunks || [],
         createdAt: a.createdAt, stale: !!a.stale
       };
