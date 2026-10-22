@@ -19,7 +19,11 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `file://`) the old route stays, marked `cropSource: "file"`; a failed live
   crop falls back to it for a new annotation and keeps the reason in
   `liveCropError`, while an existing annotation keeps its crop. Editing a
-  comment keeps the crop of the selection moment, also after a reload. The
+  comment keeps the crop of the selection moment, also after a reload. Saves
+  and deletes of one annotation run one after the other (a queue per id in the
+  snippet, a lock per id plus a delete tombstone in the bridge): an edit during
+  a slow crop wins without starting a second Chrome, and a delete during a
+  slow crop is not undone when that crop finishes. The
   snapshot lives in memory only, never in localStorage, and is freed when its
   popup is cancelled or replaced or its save fails (B44,
   `tests/case-23-crop-live.mjs`, `tests/test_live_crop.py`).

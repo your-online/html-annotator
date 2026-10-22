@@ -17,7 +17,8 @@
    bewerken maakt geen nieuwe crop (ook niet na een herlaad); annotatie verwijderen =
    crop-bestand weg; de pagina die na de selectie verandert, verandert de crop niet;
    wachtwoordvelden en on*-attributen zitten niet in de snapshot; een vervangen of
-   mislukte popup laat geen snapshot in het geheugen achter; in quirks mode is de
+   mislukte popup laat geen snapshot in het geheugen achter; save, bewerking en delete
+   van één annotatie gaan na elkaar naar de bridge; in quirks mode is de
    viewport het venster; een selectie onder de viewport rendert op de viewport van de
    reviewer; een file://-pagina (Origin "null") krijgt de crop uit het bestand.
 
@@ -402,6 +403,44 @@ try {
       if (a) return window.HtmlAnnotator.remove(a);
     });
     await modus(page, false);
+  }
+
+  // 15/16: /save en /delete van één annotatie gaan na elkaar; een bewerking of verwijdering
+  // tijdens een trage save wacht tot die save klaar is (geen tweede crop, niets komt terug).
+  {
+    const volg = [];
+    await page.route('**/save', async (route) => {
+      const resp = await route.fetch();
+      await sleep(1200);
+      volg.push('save-klaar');
+      await route.fulfill({ response: resp });
+    });
+    const uit = (r) => {
+      if (r.method() === 'POST' && /\/(save|delete)$/.test(r.url())) volg.push(r.url().endsWith('/save') ? 'save-uit' : 'delete-uit');
+    };
+    page.on('request', uit);
+    const n0 = saves.length;
+    const id = await page.evaluate(() => {
+      const a = { id: 'rij-' + Date.now(), type: 'region', rect: { x: 10, y: 10, w: 60, h: 40 },
+        comment: 'eerst', target: '', createdAt: new Date().toISOString() };
+      window.__laRij = a;
+      window.HtmlAnnotator.save(a).catch(() => {});
+      return a.id;
+    });
+    await sleep(300);
+    await page.evaluate(() => { const a = window.__laRij; a.comment = 'tweede'; window.HtmlAnnotator.save(a).catch(() => {}); });
+    await sleep(300);
+    await page.evaluate(() => window.HtmlAnnotator.remove(window.__laRij));
+    for (let i = 0; i < 60 && volg.filter((x) => x === 'delete-uit').length === 0; i++) await sleep(100);
+    await sleep(300);
+    page.off('request', uit);
+    await page.unroute('**/save');
+    const verwacht = 'save-uit save-klaar save-uit save-klaar delete-uit';
+    zeg(volg.join(' ') === verwacht, `15/16 save, bewerking en delete van één id na elkaar (${volg.join(' ')})`);
+    const mijn = saves.slice(n0).filter((x) => x.annotation && x.annotation.id === id);
+    zeg(mijn.length === 2 && !!mijn[0].snapshot && !mijn[1].snapshot && mijn[1].annotation.comment === 'tweede',
+      `16 de bewerking vertrekt zonder snapshot (geen tweede crop) (${mijn.map((x) => !!x.snapshot).join(',')})`);
+    zeg(!lees().annotations.some((x) => x.id === id), '15 verwijderd tijdens een trage save: blijft weg');
   }
 
   // 2: na een herlaad een comment bewerken stuurt geen nieuwe snapshot en laat de crop staan.

@@ -614,7 +614,10 @@ viewport, a broken or too large snapshot (`SNAP_MAX`, same limit in the
 snippet) or a failed live crop gives `cropSource: "file"` plus
 `liveCropError` for a new annotation; an existing annotation keeps its crop.
 A new crop replaces the old file only once it succeeded. The crop runs
-outside the bridge lock: `/session` answers during a slow crop.
+outside the bridge lock: `/session` answers during a slow crop. Saves and
+deletes of one annotation run one after the other: an edit during a slow crop
+wins without a second crop, and a delete during a slow crop is not undone
+when that crop finishes.
 
 Security, as properties: the bridge sanitises the snapshot (no `script`,
 `on*`, `javascript:` URLs, `iframe`/`object`/`embed`, `<meta http-equiv>`,
@@ -627,12 +630,14 @@ another origin or none: file crop with `liveCropError`).
 
 *Evidence:* `tests/case-23-crop-live.mjs` (browser); `tests/test_live_crop.py`
 (fake Chrome: sanitiser, CSP, origin, token lifetime, viewport, lock, keep on
-failure, process tree). Mutants that turn them red: no snapshot at selection,
+failure, process tree, delete/edit during a slow crop). Mutants that turn them red: no snapshot at selection,
 `laBijBridge` not set after a reload, snapshot not freed on a replaced popup
 or failed save, viewport from `documentElement`, `SNAPS.pop` removed,
 sanitiser as no-op, origin not checked, `</body>` found via `lower()`, crop
 under the lock, existing crop not kept, viewport allowed to grow, `file://`
-render restored, CSP without `connect-src`, no password mask. Decisions in
+render restored, CSP without `connect-src`, no password mask, file crop
+failure without keeping the existing crop, no delete tombstone, no per-id
+lock, no per-id queue in the snippet. Decisions in
 `docs/DECISIONS.md` (2026-10-09, 2026-10-21).
 
 *Gap:* shadow DOM, cross-origin iframes, `blob:` images, `:hover` and focus

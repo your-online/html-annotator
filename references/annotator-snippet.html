@@ -1575,6 +1575,17 @@
   }
 
   /* ---- opslaan / verwijderen ------------------------------------- */
+  /* /save en /delete van één annotatie gaan na elkaar naar de bridge: een /save kan
+     seconden op zijn crop wachten. Zo vindt een /delete de annotatie altijd, en wint de
+     laatste bewerking (die vertrekt pas als de vorige save klaar is, zonder snapshot). */
+  var laRij = {};
+  function laInRij(id, stap) {
+    var p = (laRij[id] || Promise.resolve()).then(stap);
+    var staart = laRij[id] = p.catch(function () {});
+    staart.then(function () { if (laRij[id] === staart) delete laRij[id]; });
+    return p;
+  }
+
   function bewaarAnnotatie(a) {
     laKoppelRegio(a);
     if (!anns.some(function (x) { return x.id === a.id; })) anns.push(a);
@@ -1585,35 +1596,37 @@
       var s0 = laSnapshot();
       if (s0) laSnaps[a.id] = s0;
     }
-    var snap = laSnaps[a.id] || null;
     bewaarLokaal(); render();
-    return post("/save", Object.assign(basis(), snap ? { snapshot: snap } : {}, {
-      annotation: {
-        id: a.id, type: a.type, rect: a.rect, comment: a.comment, target: a.target,
-        selectedText: a.selectedText || null, locator: a.locator || null,
-        refs: a.refs || null, img: a.img || null, createdAt: a.createdAt,
-        /* bewerkingen op een conceptbericht; leeg voor de andere types */
-        veld: a.veld || null, origineel: a.origineel || null, nieuw: a.nieuw || null,
-        origineelHtml: a.origineelHtml || null, nieuwHtml: a.nieuwHtml || null,
-        rijk: a.rijk || null,
-        diff: a.diff || null, hunks: a.hunks || null
-      }
-    })).then(function (j) {
-      brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
-      delete laSnaps[a.id]; laBijBridge[a.id] = true;
-      a.nr = j.nr; bewaarLokaal(); render();
-      zetStatus(true, j.count + " saved", j.jsonPath);
-      return j;
-    }).catch(function (e) {
-      /* opslaan mislukt: de snapshot gaat niet meer mee (geheugen vrijgeven) */
-      delete laSnaps[a.id];
-      brug.ok = false;
-      zetStatus(false, "bridge off - localStorage only",
-        "Start the bridge: python -m html_annotator ensure");
-      alert("The bridge is not running, so nothing was written to disk.\n" +
-        "Your annotation is only in localStorage. Start the bridge with:\n" +
-        "python -m html_annotator ensure");
-      throw e;
+    return laInRij(a.id, function () {
+      var snap = laSnaps[a.id] || null;
+      return post("/save", Object.assign(basis(), snap ? { snapshot: snap } : {}, {
+        annotation: {
+          id: a.id, type: a.type, rect: a.rect, comment: a.comment, target: a.target,
+          selectedText: a.selectedText || null, locator: a.locator || null,
+          refs: a.refs || null, img: a.img || null, createdAt: a.createdAt,
+          /* bewerkingen op een conceptbericht; leeg voor de andere types */
+          veld: a.veld || null, origineel: a.origineel || null, nieuw: a.nieuw || null,
+          origineelHtml: a.origineelHtml || null, nieuwHtml: a.nieuwHtml || null,
+          rijk: a.rijk || null,
+          diff: a.diff || null, hunks: a.hunks || null
+        }
+      })).then(function (j) {
+        brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
+        delete laSnaps[a.id]; laBijBridge[a.id] = true;
+        a.nr = j.nr; bewaarLokaal(); render();
+        zetStatus(true, j.count + " saved", j.jsonPath);
+        return j;
+      }).catch(function (e) {
+        /* opslaan mislukt: de snapshot gaat niet meer mee (geheugen vrijgeven) */
+        delete laSnaps[a.id];
+        brug.ok = false;
+        zetStatus(false, "bridge off - localStorage only",
+          "Start the bridge: python -m html_annotator ensure");
+        alert("The bridge is not running, so nothing was written to disk.\n" +
+          "Your annotation is only in localStorage. Start the bridge with:\n" +
+          "python -m html_annotator ensure");
+        throw e;
+      });
     });
   }
 
@@ -1621,7 +1634,9 @@
     anns = anns.filter(function (x) { return x.id !== a.id; });
     delete laSnaps[a.id];
     bewaarLokaal(); render();
-    return post("/delete", Object.assign(basis(), { id: a.id })).then(function (j) {
+    return laInRij(a.id, function () {
+      return post("/delete", Object.assign(basis(), { id: a.id }));
+    }).then(function (j) {
       brug.count = j.count;
       zetStatus(true, j.count + " saved", j.jsonPath);
     }).catch(function () { /* offline: localStorage is al bijgewerkt */ });

@@ -586,16 +586,15 @@ def _getal(waarde, standaard, lo, hi, soort=int):
     return max(lo, min(hi, v))
 
 
-def maak_crop_live(snap, page_url, rect, uit_pad, chrome=None, pillow=None, snaps=None,
-                   host=None, port=None):
+def maak_crop_live(snap, page_url, rect, uit_pad, chrome=None, pillow=None, port=None):
     """Crop uit de live snapshot: zelfde DOM-staat, viewport, scroll en DPR als de reviewer.
 
-    Chrome, Pillow, de snapshot-opslag en het adres van de bridge zijn parameters (standaard
-    die van deze module), zodat een test ze via de interface meegeeft."""
+    Chrome, Pillow en de poort van de bridge zijn parameters (standaard die van deze
+    module), zodat een test ze via de interface meegeeft. Vereist een draaiende bridge in
+    dit proces op die poort: Chrome haalt de snapshot op via /snap/<token> (SNAPS)."""
     chrome = chrome or CHROME
     pillow = HEEFT_PILLOW if pillow is None else pillow
-    snaps = SNAPS if snaps is None else snaps
-    host, port = host or HOST, port or PORT
+    port = port or PORT
     html = snap.get("html")
     if not isinstance(html, str) or not html.strip():
         raise ValueError("lege snapshot")
@@ -644,8 +643,8 @@ def maak_crop_live(snap, page_url, rect, uit_pad, chrome=None, pillow=None, snap
         # Altijd via de bridge (/snap/<token>), same-origin met /p/: CSS, fonts en
         # afbeeldingen laden, de CSP-header geldt voor het hele document, en er is geen
         # file://-document en geen bestandstoegang.
-        snaps[token] = bereid_snapshot(html, sx, sy, base=base, port=port)
-        url = "http://%s:%d/snap/%s" % (host, port, token)
+        SNAPS[token] = bereid_snapshot(html, sx, sy, base=base, port=port)
+        url = "http://%s:%d/snap/%s" % (HOST, port, token)
         os.makedirs(os.path.dirname(uit_pad), exist_ok=True)
         # Altijd via een iframe ter grootte van de viewport van de reviewer. Chromes
         # --screenshot legt het document vanaf (0,0) vast en schildert wat buiten beeld
@@ -670,7 +669,7 @@ def maak_crop_live(snap, page_url, rect, uit_pad, chrome=None, pillow=None, snap
                 k = [int(round(v * dpr)) for v in box]
                 img.crop((k[0], k[1], min(k[2], img.width), min(k[3], img.height))).save(uit_pad)
     finally:
-        snaps.pop(token, None)
+        SNAPS.pop(token, None)
         shutil.rmtree(werk, ignore_errors=True)
     return uit_pad
 
@@ -870,30 +869,67 @@ def kies_crop(snap, live_toegestaan, page_url, bestand, doc, rect, bestaande, h,
         return None, None, fouten
 
 
+# Volgorde per annotatie (2026-10-22): een /save kan seconden op zijn crop wachten. Saves
+# van hetzelfde id lopen na elkaar (ID_SLOTEN), zodat een bewerking de record van de eerste
+# save ziet, geen tweede crop maakt en als laatste schrijft. Elke /save en /delete krijgt
+# een volgnummer; een save schrijft niet als het id na zijn binnenkomst verwijderd is
+# (VERWIJDERD, tombstone). De dicts worden onder LOCK gelezen en geschreven.
+VOLGNR = [0]
+ID_SLOTEN = {}                    # (paginamap, id) -> Lock
+VERWIJDERD = {}                   # (paginamap, id) -> volgnummer van de /delete
+
+
+def _ann_sleutel(payload, ann_id):
+    return (pagina_map(payload)[0], ann_id)
+
+
+def _volgende():
+    VOLGNR[0] += 1
+    return VOLGNR[0]
+
+
 def h_save(payload, live_toegestaan=False):
     """Annotatie opslaan. De crop (headless Chrome, seconden) draait buiten LOCK; alleen
     het lezen en het schrijven van de JSON gebeuren eronder, zodat /session en /delete niet
-    op een crop wachten. live_toegestaan: de /save komt van de eigen origin (do_POST)."""
+    op een crop wachten. live_toegestaan: de /save komt van de eigen origin (do_POST).
+    Saves van hetzelfde id lopen na elkaar; een /delete tussendoor wint."""
     ann = dict(payload.get("annotation") or {})
     soort = ann.get("type") or ("text" if ann.get("selectedText") else "region")
-    crop, tijdelijk = None, None
-    if soort == "region":
-        with LOCK:
-            # alleen lezen: een lege rondemap zonder JSON zou een volgende ronde openen
-            _nr, _ronde_map, _json_pad, data, bestand, h = bepaal_ronde(payload)
-            bestaande = next((a for a in data.get("annotations", [])
-                              if a.get("id") == ann.get("id")), None)
-            doc = payload.get("doc") or data.get("doc") or {}
-        os.makedirs(CACHE, exist_ok=True)
-        tijdelijk = os.path.join(CACHE, "crop-%s.png" % hashlib.sha256(os.urandom(8)).hexdigest()[:16])
-        crop = kies_crop(payload.get("snapshot"), live_toegestaan, payload.get("page"), bestand,
-                         doc, ann.get("rect") or {}, bestaande, h, tijdelijk)
-    try:
-        with LOCK:
-            return _bewaar(payload, ann, soort, crop, tijdelijk)
-    finally:
-        if tijdelijk and os.path.exists(tijdelijk):
-            os.remove(tijdelijk)
+    sleutel = _ann_sleutel(payload, ann.get("id"))
+    with LOCK:
+        volgnr = _volgende()
+        slot = ID_SLOTEN.setdefault(sleutel, threading.Lock())
+    with slot:
+        crop, tijdelijk = None, None
+        if soort == "region":
+            with LOCK:
+                # alleen lezen: een lege rondemap zonder JSON zou een volgende ronde openen
+                _nr, _ronde_map, _json_pad, data, bestand, h = bepaal_ronde(payload)
+                bestaande = next((a for a in data.get("annotations", [])
+                                  if a.get("id") == ann.get("id")), None)
+                doc = payload.get("doc") or data.get("doc") or {}
+            os.makedirs(CACHE, exist_ok=True)
+            tijdelijk = os.path.join(CACHE, "crop-%s.png"
+                                     % hashlib.sha256(os.urandom(8)).hexdigest()[:16])
+            crop = kies_crop(payload.get("snapshot"), live_toegestaan, payload.get("page"),
+                             bestand, doc, ann.get("rect") or {}, bestaande, h, tijdelijk)
+        try:
+            with LOCK:
+                if VERWIJDERD.get(sleutel, -1) > volgnr:
+                    return _niet_bewaard(payload, ann)
+                return _bewaar(payload, ann, soort, crop, tijdelijk)
+        finally:
+            if tijdelijk and os.path.exists(tijdelijk):
+                os.remove(tijdelijk)
+
+
+def _niet_bewaard(payload, ann):
+    """Antwoord voor een save die is ingehaald door een /delete van hetzelfde id."""
+    nr, _m, json_pad, data, _b, _h = bepaal_ronde(payload)
+    lijst = data.get("annotations", [])
+    rec = next((a for a in lijst if a.get("id") == ann.get("id")), None) or {}
+    return {"ok": True, "round": nr, "jsonPath": json_pad, "nr": rec.get("nr"),
+            "image": rec.get("image"), "count": len(lijst), "deleted": True}
 
 
 def _bewaar(payload, ann, soort, crop, tijdelijk):
@@ -1007,6 +1043,8 @@ def _bewaar(payload, ann, soort, crop, tijdelijk):
 
 
 def h_delete(payload):
+    # tombstone: een /save van dit id die nog op zijn crop wacht, schrijft hem niet terug
+    VERWIJDERD[_ann_sleutel(payload, payload.get("id"))] = _volgende()
     nr, ronde_map, json_pad, data, _, _h = bepaal_ronde(payload)
     if not os.path.isfile(json_pad):
         return {"ok": True, "round": nr, "count": 0, "jsonPath": json_pad}

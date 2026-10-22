@@ -235,7 +235,7 @@ class Bridge:
         rec = None
         if j.get("ok"):
             with open(j["jsonPath"], encoding="utf-8") as f:
-                rec = next(a for a in json.load(f)["annotations"] if a.get("id") == ann_id)
+                rec = next((a for a in json.load(f)["annotations"] if a.get("id") == ann_id), None)
         return code, j, rec
 
     def crop_bytes(self, j, rec):
@@ -356,6 +356,9 @@ def snapshot_checks(b):
     n += check("1c live crop zonder --allow-file-access-from-files",
                regels and all("--allow-file-access-from-files" not in r["argv"] for r in regels),
                json.dumps([r["argv"] for r in regels])[:300])
+    n += check("B45 elke Chrome-run met --use-mock-keychain en --password-store=basic",
+               regels and all("--use-mock-keychain" in r["argv"] and "--password-store=basic" in r["argv"]
+                              for r in regels), json.dumps([r["argv"] for r in regels])[:300])
     f = snaps[0] if snaps else {}
     csp = f.get("csp") or ""
     body = f.get("body") or ""
@@ -443,6 +446,71 @@ def lock_checks(b):
     return n
 
 
+def lees_rec(json_pad, ann_id):
+    with open(json_pad, encoding="utf-8") as f:
+        return next((a for a in json.load(f)["annotations"] if a.get("id") == ann_id), None) or {}
+
+
+def sessie_ids(b):
+    _, raw = http("POST", b.basis + "/session", {"page": b.page_url, "slug": "pagina"},
+                  headers={"Origin": b.basis})
+    return {a["id"]: a for a in json.loads(raw)["annotations"]}
+
+
+def race_checks(b):
+    """15/16: /delete en een bewerking terwijl de eerste /save nog op zijn crop wacht."""
+    n = 0
+    # 15: delete tijdens een trage live crop; de save mag de annotatie niet terugzetten.
+    b.modus("traag")
+    klaar = {}
+    t = threading.Thread(target=lambda: klaar.setdefault("s", b.save("del-1", "x", snap("<p>x</p>"))))
+    t.start()
+    time.sleep(0.8)
+    code, _ = http("POST", b.basis + "/delete", {"page": b.page_url, "slug": "pagina", "id": "del-1"},
+                   headers={"Origin": b.basis})
+    t.join(30)
+    b.modus("ok")
+    ids = sessie_ids(b)
+    _, j, _rec = klaar.get("s", (0, {"jsonPath": os.path.join(b.root, "x")}, None))
+    shots = os.path.join(os.path.dirname(j["jsonPath"]), "screenshots")
+    with open(j["jsonPath"], encoding="utf-8") as f:
+        bekend = {os.path.basename(a.get("image") or "") for a in json.load(f)["annotations"]}
+    wees = [x for x in (os.listdir(shots) if os.path.isdir(shots) else [])
+            if re.fullmatch(r"annotatie-\d+\.png", x) and x not in bekend]
+    n += check("15 /delete tijdens een trage crop: annotatie blijft weg",
+               code == 200 and "del-1" not in ids and j.get("ok"), repr(sorted(ids)))
+    n += check("15 geen crop-bestand van de verwijderde annotatie", not wees, repr(wees))
+    # 16: bewerking (zonder snapshot, zoals de snippet) terwijl de eerste save cropt.
+    b.modus("traag")
+    klaar = {}
+    voor = len(b.logregels())
+    t = threading.Thread(target=lambda: klaar.setdefault("s", b.save("ed-1", "oud", snap("<p>x</p>"))))
+    t.start()
+    time.sleep(0.5)
+    b.modus("ok")
+    _, j, _rec = b.save("ed-1", "nieuw", None)
+    t.join(30)
+    rec = lees_rec(j["jsonPath"], "ed-1")
+    n += check("16 bewerking tijdens de crop: de laatste bewerking wint, live crop blijft",
+               rec.get("comment") == "nieuw" and rec.get("cropSource") == "live" and rec.get("image"),
+               repr(rec))
+    n += check("16 de bewerking start geen tweede Chrome", len(b.logregels()) - voor == 1,
+               str(len(b.logregels()) - voor))
+    # 16b: twee saves met snapshot; de tweede is sneller klaar maar later binnen: die wint.
+    b.modus("traag")
+    klaar = {}
+    t = threading.Thread(target=lambda: klaar.setdefault("s", b.save("ed-2", "oud", snap("<p>x</p>"))))
+    t.start()
+    time.sleep(0.5)
+    b.modus("ok")
+    _, j, _rec = b.save("ed-2", "nieuw", snap("<p>y</p>"))
+    t.join(30)
+    rec = lees_rec(j["jsonPath"], "ed-2")
+    n += check("16 twee saves van hetzelfde id: de laatst binnengekomen wint",
+               rec.get("comment") == "nieuw", repr(rec))
+    return n
+
+
 def behoud_checks():
     """2/3/14b: een mislukte nieuwe crop gooit nooit een goede bestaande crop weg (zonder Pillow:
     Chrome schrijft daar direct op het doelpad)."""
@@ -465,6 +533,10 @@ def behoud_checks():
         b2 = b.crop_bytes(j, rec)
         n += check("3 opzet: file crop", rec and rec.get("cropSource") == "file" and b2, repr(rec))
         b.modus("fail")
+        _, j, rec = b.save("file-1", "zonder snapshot", None)
+        n += check("3 file crop mislukt zonder snapshot: bestaande crop blijft, geen imageError",
+                   rec and rec.get("cropSource") == "file" and b2 and b.crop_bytes(j, rec) == b2
+                   and "imageError" not in rec and rec.get("comment") == "zonder snapshot", repr(rec))
         _, j, rec = b.save("file-1", "opnieuw", {"html": 123})
         n += check("3/14b nieuwe crop mislukt (live en file): bestaande crop blijft, bestand intact",
                    rec and rec.get("image") and b2 and b.crop_bytes(j, rec) == b2
@@ -520,7 +592,7 @@ def url_checks():
 
 
 def injectie_checks():
-    """13: maak_crop_live krijgt Chrome, Pillow, snapshot-opslag en poort als parameter."""
+    """13: maak_crop_live krijgt Chrome, Pillow en poort als parameter."""
     n = 0
     nep = tempfile.mkdtemp(prefix="ann-inject-")
     os.environ["NEP_CHROME_DIR"] = nep
@@ -658,6 +730,7 @@ def main():
             n += viewport_checks(b)
             n += origin_checks(b)
             n += lock_checks(b)
+            n += race_checks(b)
         finally:
             b.stop()
         n += behoud_checks()
