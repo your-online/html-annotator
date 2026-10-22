@@ -530,3 +530,76 @@ alle capabilities weg (`--cap-drop=ALL`) en `sleep infinity` als PID 1.
   `HTML_ANNOTATOR_ROOT`. In een container met de pagina's op een mount wil
   je de rondes daar ook, en met alleen een env-variabele stonden de
   instellingen op twee plekken. Zelfde voorrang als de andere sleutels.
+
+## 2026-10-20 — Agenda slepen en een endpoint-meta voor elders gepubliceerde pagina's
+
+- **Wie sleepte is een parameter.** De sync-notitie "door <naam> verplaatst
+  van X naar Y" haalt de naam uit `--by`, anders uit het overlayveld
+  `movedBy`, anders `reviewer`. Een vaste naam in de code past niet bij een
+  generieke skill; een overlayveld laat een agent het per pagina één keer
+  zetten, de vlag wint voor een losse run.
+- **State per voorstel draagt een `base`.** De pagina schrijft naast de nieuwe
+  tijd ook de overlaytijd waar de sleep van uitging. Laden en sync passen de
+  state alleen toe zolang de overlay nog die tijd heeft; heeft de agent het
+  voorstel intussen zelf verzet, dan wint de overlay en meldt de sync dat.
+  Verstuurde of vervallen voorstellen volgen de echte agenda en worden nooit
+  door een oude sleep verzet.
+- **De agenda-pagina zoekt de bridge zoals het snippet:** via `/p/` de eigen
+  origin, anders de standaardpoort. Een vaste `127.0.0.1:8791` zou op een
+  machine met een andere poort stil "bridge uit" tonen.
+- **`html-annotator-endpoint` in plaats van een productnaam.** De meta is een
+  algemeen contract (zelfde routes en antwoorden als de bridge), niet gebonden
+  aan één deelserver. Alleen `http(s)`, en op `/p/` genegeerd: de lokale
+  bridge blijft leidend waar hij bereikbaar is, en een meta met
+  `javascript:` of een relatief pad kan de schrijfroute niet kapen.
+
+## 2026-10-21 — Review-ronde agenda en endpoint: één bron voor de schrijfroute
+
+- **De endpointkeuze staat op één plek: blok `LA-BRIDGE-KEUZE` in het
+  annotator-snippet** (route plus pagina-identiteit: `slug()`,
+  `paginaBestand()`). Er waren drie kopieën (annotator, checklist, agenda) en
+  die liepen al uiteen. De agenda-pagina plakt het blok bij het bouwen
+  letterlijk in (`agenda-preview.py` leest het uit het snippet): geen kopie in
+  de repo en het werkt ook zonder snippet op de pagina (`--no-snippet`). Het
+  checklist-snippet is een los plakblok dat vóór het annotator-snippet staat;
+  het vraagt de route bij elk verzoek op via `HtmlAnnotator.bridgeRoute()` en
+  laadt zijn state pas na `DOMContentLoaded`. Alleen als de annotator niet op
+  de pagina staat valt het terug op een korte kopie van dezelfde regel; dat is
+  de enige overgebleven duplicatie, gekozen omdat de checklist los moet kunnen
+  werken. Case-26 test beide paden. Verworpen: een apart gedeeld scriptbestand
+  (pagina's zijn zelfstandige HTML zonder externe bestanden) en de checklist
+  laten afhangen van de annotator (dan schrijft een losse checklist nergens).
+- **"Een `/p/`-pagina van de bridge" betekent loopback-host én `/p/`-pad**
+  (`127.0.0.1`, `localhost`, `[::1]`), zoals het handboek al zei. Alleen het pad
+  controleren liet een elders gepubliceerde pagina met `/p/` in de URL naar
+  zijn eigen origin schrijven in plaats van naar het endpoint.
+- **De agenda stuurt de slug van het `-o`-bestand mee**, met dezelfde velden
+  als het snippet (`page`, `pageFile`, `slug`, `title`). Buiten `/p/` (lokale
+  dev-server, preview-pane) is er geen `pageFile`, en de titel-slug van het
+  snippet wijkt af van wat de sync zoekt; de bestandsslug laat beide routes in
+  dezelfde `state.json` uitkomen.
+- **Sync markeert een verwerkte sleep met `base` = de nieuwe tijd**, via
+  dezelfde bridge-route (`/state-save`, zonder bridge de handler zelf op
+  schijf). Een entry met start = base is geen verplaatsing; zet de agent het
+  voorstel later bewust terug, dan komt de oude sleep niet terug, niet op de
+  pagina en niet in de volgende sync. Gekozen boven een aparte `synced`-vlag:
+  de pagina kent `base` al, een vlag zou de pagina-logica moeten uitbreiden.
+  Prijs: tussen sync en opnieuw renderen toont een herladen oude pagina de
+  oude overlaytijd; het handboek zegt al direct na de sync te renderen.
+- **De sync gebruikt de status zoals de pagina hem toont** (de `agenda-data`
+  van het gebouwde bestand), naast de overlay-status. Build leidt "verstuurd"
+  af uit een echt event met dezelfde titel en start; de overlay weet dat niet,
+  dus alleen de overlay lezen gaf een spookdubbel. Daarom weigert de sync ook
+  een paginapad dat niet bestaat: raden gaf de state van een andere pagina.
+- **Geen eigen slug- en state-regels in `agenda-spec.py`**: zonder bridge
+  roept de sync `bridge.h_state` / `bridge.h_state_save` rechtstreeks aan, en
+  `agenda-preview.py` gebruikt `bridge.slugify`. `bin/agenda-sync.py` is weg:
+  een alias die alleen doorstuurde was een tweede naam voor hetzelfde.
+- **Opslaan per voorstel: één verzoek tegelijk, de laatste stand wint.** Een
+  trage bridge kon een oudere tijd na een nieuwere wegschrijven. Laden van de
+  state schrijft niet over een blok dat de reviewer al verzette en rendert
+  niet midden in een sleep (dan verdween het gesleepte blok onder de pointer);
+  het rendert na het neerzetten.
+- **De agenda-pagina is Engels**, ook de notitie "moved by <naam> from X to
+  Y", net als de pil en de knoppen van het snippet. De statuswaarden in de
+  overlay (`open|verstuurd|vervallen`) blijven data en dus ongewijzigd.

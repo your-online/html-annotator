@@ -34,6 +34,33 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--no-sandbox` (B41) is unchanged. Chrome is waited for and then stopped with
   its whole process tree before the profile is removed; only a complete PNG is
   accepted (B45).
+- Agenda preview: open proposals can be dragged (move within the week, grips
+  for start and end, 15-minute snap, mouse and touch). Every change autosaves
+  through the bridge into the page's `state.json` (component `agenda`, key
+  `voorstel-<nr>` with `base`), with the page identity and the slug of the
+  `-o` file, so it also lands there outside `/p/`; one save per proposal is
+  in flight at a time, the newest wins. On load that state wins as long as
+  the overlay did not change since, never over a block the reviewer already
+  moved and never in the middle of a drag. `agenda-spec.py --apply-state`
+  writes moved times back into the overlay with a note "moved by <name> from
+  X to Y"; the name comes from `--by`, the overlay field `movedBy`, or
+  defaults to `reviewer`. It refuses a page file that does not exist, skips
+  proposals that are not open on the page (also when the page derived "sent"
+  from a real event), and marks an applied drag as processed (`base` = the
+  new time) so it is never applied twice, while a later drag on the not
+  yet re-rendered page is still applied. It reads the state from disk only
+  when no bridge runs, stops on a bridge error (`ok:false`, HTTP error,
+  time-out) and prints the route (`(bridge)` or `(disk)`). The page UI is English (B47,
+  `tests/test_agenda.py`, `tests/case-25-agenda-slepen.mjs`).
+- `<meta name="html-annotator-endpoint" content="https://...">`: a page
+  published by another server can point the annotator snippet, the
+  checklist snippet and the agenda preview at that server instead of the
+  local bridge. Only `http(s)` values in a `<head>` meta count, never on
+  `file://`; a `/p/` page of the bridge
+  itself (loopback host and `/p/` path) ignores it, and without it nothing
+  changes. The pill then reads "N saved remotely". The choice lives in one
+  block of the annotator snippet (`HtmlAnnotator.bridgeRoute()`) (B48,
+  `tests/case-26-endpoint-meta.mjs`).
 - Continuous select (`continuous_select` in the config file,
   `HTML_ANNOTATOR_CONTINUOUS_SELECT` in the environment, on by default): after
   Save the region mode stays on, so the next region is one drag away instead

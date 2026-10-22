@@ -37,6 +37,9 @@ jobs:
           python tests/test_container.py
           python tests/test_live_crop.py
           python tests/test_layout.py
+          # agenda-spec gebruikt zoneinfo; Windows heeft geen tz-database zonder tzdata
+          python -m pip install -q tzdata
+          python tests/test_agenda.py
 
       - name: Packaging (pip install + console script)
         run: |
@@ -122,7 +125,7 @@ jobs:
       - name: Install playwright-core
         run: cd tests && npm i --no-save playwright-core
       - name: Run suite
-        run: tests/run.sh 00 09 11 02 06 08 12 14 15 16 17 19
+        run: tests/run.sh 00 09 11 02 06 08 12 14 15 16 17 19 25 26
 
       - name: Stop bridge
         if: always()

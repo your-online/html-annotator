@@ -15,14 +15,21 @@
 </style>
 <script>
 (function(){
-  /* Via /p/ geserveerd: de bridge is de eigen origin (welke poort ook). Als bestand
-     geopend: best effort op de standaardpoort; Chrome blokkeert file:// naar
-     loopback toch al (Private Network Access), dus open de pagina via `url`. */
-  var BRIDGE=(location.protocol.indexOf("http")===0&&location.pathname.indexOf("/p/")===0)
-    ?location.origin:"http://127.0.0.1:8791";
+  /* Schrijfroute: de keuze van het annotator-snippet (HtmlAnnotator.bridgeRoute, blok
+     LA-BRIDGE-KEUZE), zodat die regel op één plek staat. Dit blok staat vóór het
+     annotator-snippet, dus de route pas opvragen bij het posten. Zonder annotator op de
+     pagina dezelfde regel in het kort: /p/ op een loopback-host = de bridge zelf, anders
+     de endpoint-meta (alleen http(s), alleen in <head>, nooit op file://), anders de
+     standaardpoort. */
+  function bridge(){
+    var A=window.HtmlAnnotator;if(A&&A.bridgeRoute)return A.bridgeRoute().origin;
+    var opP=location.protocol.indexOf("http")===0&&/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)
+      &&location.pathname.indexOf("/p/")===0;
+    var m=!opP&&location.protocol!=="file:"&&document.querySelector('head > meta[name="html-annotator-endpoint"]'),u=m&&m.getAttribute("content");
+    return u&&/^https?:\/\//.test(u)?u.replace(/\/+$/,""):opP?location.origin:"http://127.0.0.1:8791";}
   var items=[].slice.call(document.querySelectorAll("[data-la-check]"));
   if(!items.length)return;
-  function post(pad,body){return fetch(BRIDGE+pad,{method:"POST",
+  function post(pad,body){return fetch(bridge()+pad,{method:"POST",
     headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
     .then(function(r){return r.json();});}
   function label(el){
@@ -42,14 +49,15 @@
     var slot=el.querySelector(".la-check-slot")||el.querySelector("summary")||el;
     slot.insertBefore(cb,slot.firstChild);
   });
-  post("/state",{page:location.href}).then(function(res){
+  function laad(){post("/state",{page:location.href}).then(function(res){
     var comp=(res&&res.state&&res.state.components&&res.state.components.checklist)||{};
     items.forEach(function(el){
       var e=comp[el.getAttribute("data-la-check")];
       if(e&&e.checked){var cb=el.querySelector(".la-check");
         if(cb){cb.checked=true;el.classList.add("la-checked");}}
     });
-  }).catch(function(){});
+  }).catch(function(){});}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",laad);else laad();
 })();
 </script>
 <!-- /LA-CHECKLIST -->
