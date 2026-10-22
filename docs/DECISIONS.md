@@ -3,6 +3,59 @@
 Choices a later cleanup must not reopen without the owner.
 Changing behaviour is a new decision, not an edit here.
 
+## 2026-10-09 — The crop comes from a live DOM snapshot, not from the page file
+
+Trigger: a region selection over an expanded `<details>` gave a crop with
+the toggle closed.
+
+**Mechanism, checked.** The crop is made at save time: `h_save` →
+`maak_crop` → `volledige_shot`, synchronously in the `/save` request. That
+loaded the page file freshly in headless Chrome at `--window-size=<doc.w>,<doc.h>`
+and cut the rect out. Everything not in the file was lost: `<details open>`,
+scroll positions of containers and window, filled-in fields, state set by
+scripts; a `position:fixed` header sat at the top of the document instead
+of the top of the view.
+
+**Decision.** At the selection (mouseup, before the popup opens) the snippet
+takes a snapshot: `documentElement.cloneNode(true)`, with live state that is
+not an attribute written onto the clone (`value`, `checked`, `selected`,
+`textarea`, `data-la-snap-scroll` for scrolled elements, canvas → `<img>`,
+CSSOM rules of empty `<style>` tags and adoptedStyleSheets), scripts and
+`on*` attributes removed, annotator UI removed, `<base href=document.baseURI>`,
+doctype in front. Plus `clientWidth/clientHeight`, `scrollX/Y` and
+`devicePixelRatio`. The snapshot goes once with `/save` of a new region and
+lives in memory only (never localStorage). The bridge renders it in an
+iframe the size of the reviewer's viewport, with its own restore script
+(CSP with a nonce: only that script runs, no network from script) that puts
+the scroll positions back; animations and transitions are off. The record
+says `cropSource: "live"`; without a snapshot the old route stays as
+`cropSource: "file"`.
+
+Why an iframe: Chrome's `--screenshot` captures the document from (0,0) and
+does not paint what is scrolled away; a scrolled window gave a white crop
+(measured). In an iframe the snapshot scrolls inside its own viewport, which
+is in view. Why `/snap/` through the bridge: same origin as `/p/`, so fonts
+(CORS) and CSS load; a `file://` page gets a temporary file, because an http
+document may not load `file://` assets. DPR is followed (max 2).
+
+Same change: the screenshot browser gets its own throwaway profile and
+`--use-mock-keychain --password-store=basic`. Without that, Chrome on macOS
+asked for the "Chrome Safe Storage" keychain item during crops. With an
+explicit `--user-data-dir` Chrome does not always exit after `--screenshot`,
+so the bridge ends it once the file is written and stable.
+
+**Rejected.**
+- `getDisplayMedia` / screen capture in the page: real pixels, but a
+  permission prompt every session, does not work in a sandboxed or embedded
+  viewer, and captures the annotator UI.
+- A DOM-to-canvas library: breaks "no libraries/CDN" and only approximates
+  CSS; Chrome renders the snapshot exactly.
+- Sending the state as a recipe (which details open, which scroll) and
+  replaying it on the file: covers only what is thought of in advance; JS
+  state falls outside.
+- CDP (`--remote-debugging-pipe`) for a real viewport screenshot: works, but
+  is a protocol client in stdlib for what the iframe wrapper also solves.
+
 ## 2026-09-17 — Public names are `html-annotator`, old names stay as aliases (F3)
 
 The skill ships under its own name instead of its author's. Public

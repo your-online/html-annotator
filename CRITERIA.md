@@ -592,6 +592,48 @@ re-enable fails); `tests/test_poort_config.py` (B43).
 
 </details>
 
+<details><summary><strong>B44 — A region crop shows what the reviewer saw when selecting.</strong></summary>
+
+*TESTED · platform: posix*
+
+*Expected behaviour:* given a page via `/p/` where the reviewer opened a
+`<details>`, scrolled an `overflow:auto` container, triggered a page script
+that changed an element, and scrolled the window under a `position:fixed`
+header, a region selection over each of those yields a crop that shows that
+live state and matches a screenshot of the live page (same box, annotator UI
+hidden), also at devicePixelRatio 2. The record carries
+`cropSource: "live"`. The snapshot never lands in localStorage. Editing the
+comment keeps the crop of the selection moment; deleting the annotation
+deletes its crop file and leaves the others. A `file://` page gets a live
+crop from the same snapshot, with and without Pillow. Without a snapshot the
+old route stays, marked `cropSource: "file"`. `/snap/<token>` answers only
+while the bridge renders that snapshot (unknown token: 404).
+
+*Evidence:* `tests/case-23-crop-live.mjs` (mutant: the snippet no longer
+sends the snapshot with `/save` → every live-state check fails); decision in
+`docs/DECISIONS.md` (2026-10-09).
+
+*Gap:* shadow DOM, cross-origin iframes, `blob:` images, `:hover` and focus
+are not captured. Pages that still embed an older snippet keep the old crop
+until they are re-embedded.
+
+</details>
+
+<details><summary><strong>B45 — The screenshot browser never touches the user's profile or keychain.</strong></summary>
+
+*TESTED · platform: posix*
+
+*Expected behaviour:* every headless Chrome run for a crop gets its own
+`--user-data-dir` in a temp directory that is gone afterwards, plus
+`--use-mock-keychain` and `--password-store=basic`, so macOS shows no
+"Chrome Safe Storage" keychain prompt. `--no-sandbox` is still added only as
+root or with `chrome_no_sandbox` / `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1` (B41).
+
+*Evidence:* `tests/case-23-crop-live.mjs` (fake Chrome records its argv;
+mutant without the keychain flags fails).
+
+</details>
+
 <details><summary><strong>B46 — A rich draft edit keeps its formatting after a reload.</strong></summary>
 
 *TESTED · platform: posix (browser)*

@@ -8,6 +8,23 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Region crops show what the reviewer saw. The bridge used to render the page
+  file freshly in headless Chrome at save time, so an opened `<details>`, a
+  scrolled container, filled-in fields and state set by page scripts were lost.
+  The snippet now takes a snapshot of the live DOM (plus viewport, scroll and
+  devicePixelRatio) at the moment of the selection and sends it once with
+  `/save` of a new region; the bridge renders that snapshot (`GET /snap/<token>`,
+  inside an iframe of the reviewer's viewport; a `file://` page gets a temporary
+  file) and records `cropSource: "live"`. Without a snapshot (older snippet,
+  direct API call) the old route stays, marked `cropSource: "file"`; a failed
+  live crop falls back to it and keeps the reason in `liveCropError`. Editing a
+  comment keeps the crop of the selection moment. The snapshot lives in memory
+  only, never in localStorage (B44, `tests/case-23-crop-live.mjs`).
+- The screenshot browser runs with its own throwaway profile
+  (`--user-data-dir` in a temp dir, removed afterwards) and
+  `--use-mock-keychain --password-store=basic`, so a crop never touches the
+  user's Chrome profile or triggers a macOS keychain prompt. Opt-in
+  `--no-sandbox` (B41) is unchanged (B45).
 - Continuous select (`continuous_select` in the config file,
   `HTML_ANNOTATOR_CONTINUOUS_SELECT` in the environment, on by default): after
   Save the region mode stays on, so the next region is one drag away instead

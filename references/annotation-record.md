@@ -10,7 +10,7 @@ geen nieuw schema.
 | `nr`, `id`, `type`, `comment`, `target`, `createdAt`, `contentHash` | altijd |
 | `selectedText`, `locator` | `type: text` |
 | `refs`, `commentExpanded`, `refsIncomplete` | als er chips zijn / als markers ontbreken |
-| `_rect`, `image`, `imageError` | `type: region` |
+| `_rect`, `image`, `imageError`, `cropSource` (`live`/`file`), `liveCropError` | `type: region` |
 | `veld`, `origineel`, `nieuw`, `diff`, `hunks` | `type: edit` |
 | `attachment` | geplakte/bijgevoegde afbeelding |
 | `resolved`, `resolvedAt` | na `/resolve` |

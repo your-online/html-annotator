@@ -234,6 +234,8 @@
   try { anns = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) {}
   var teller = anns.reduce(function (m, a) { return Math.max(m, a.nr || 0); }, 0);
   var brug = { ok: false, jsonPath: null, count: 0, round: null };
+  /* live snapshots per annotatie-id (alleen geheugen) en ids die de bridge al kent */
+  var laSnaps = {}, laBijBridge = {};
 
   /* Doorlopend selecteren (config ``continuous_select``, standaard aan): na Save
      blijft de regio-modus aan. De bridge levert de stand via /session. */
@@ -1415,7 +1417,8 @@
       if (a._composer) { if (a._composer.onAccept) a._composer.onAccept(); sluitPopup(); return; }
       markeerVerwerkt(a); sluitPopup();
     });
-    popup.querySelector(".la-cancel").addEventListener("click", function () { render(); sluitPopup(); });
+    function vergeetSnap() { if (!anns.some(function (x) { return x.id === a.id; })) delete laSnaps[a.id]; }
+    popup.querySelector(".la-cancel").addEventListener("click", function () { vergeetSnap(); render(); sluitPopup(); });
     function opslaan() {
       var parsed = laCommentLees(ed);
       var miss = laValideerRefs(parsed);
@@ -1442,7 +1445,7 @@
       } else if (ev.key === "Escape") {
         ev.preventDefault(); ev.stopPropagation();
         if (refPickMode) { zetRefPick(false); return; }
-        render(); sluitPopup();
+        vergeetSnap(); render(); sluitPopup();
       }
     });
     ed.focus();
@@ -1458,12 +1461,111 @@
     }
   }
 
+  /* ---- live snapshot voor de crop ---------------------------------
+     De bridge rendert de crop niet meer uit het paginabestand (vers geladen: dichte
+     <details>, scroller bovenaan, door JS gezette staat weg), maar uit deze snapshot
+     van de DOM op het moment van de selectie. Live staat die geen attribuut is
+     (value, checked, selected, scrollposities, canvas) wordt eerst op de kloon gezet;
+     scripts en on*-handlers gaan eruit, zodat niets de staat terugzet. De snapshot
+     leeft alleen in het geheugen (laSnaps), nooit in localStorage, en gaat één keer
+     mee met /save. */
+  var LA_UI_SEL = "#la-bar,#la-popup,#la-wees,#la-sesmeld,#la-selknop,#la-overlay," +
+    ".la-rect,.la-badge,.la-ghost,.la-sug-rect";
+  function laSnapshot() {
+    try {
+      var de = document.documentElement, kloon = de.cloneNode(true);
+      var orig = de.getElementsByTagName("*"), kopie = kloon.getElementsByTagName("*");
+      var n = Math.min(orig.length, kopie.length), i, o, k, tag;
+      var canvassen = [];
+      for (i = 0; i < n; i++) {
+        o = orig[i]; k = kopie[i]; tag = o.tagName;
+        if (o.scrollTop || o.scrollLeft) k.setAttribute("data-la-snap-scroll", o.scrollLeft + "," + o.scrollTop);
+        if (tag === "INPUT") {
+          var t = (o.type || "").toLowerCase();
+          if (t === "checkbox" || t === "radio") {
+            if (o.checked) k.setAttribute("checked", ""); else k.removeAttribute("checked");
+          } else if (t === "password") {
+            k.setAttribute("value", new Array((o.value || "").length + 1).join("x"));
+          } else if (t !== "file") {
+            k.setAttribute("value", o.value);
+          }
+        } else if (tag === "TEXTAREA") {
+          k.textContent = o.value;
+        } else if (tag === "OPTION") {
+          if (o.selected) k.setAttribute("selected", ""); else k.removeAttribute("selected");
+        } else if (tag === "CANVAS") {
+          canvassen.push([o, k]);
+        } else if (tag === "STYLE" && o.sheet && !(o.textContent || "").trim()) {
+          /* CSS-in-JS (insertRule) staat niet in de tekst van de style-tag */
+          try {
+            k.textContent = Array.prototype.map.call(o.sheet.cssRules, function (r) { return r.cssText; }).join("\n");
+          } catch (e) {}
+        }
+      }
+      canvassen.forEach(function (p) {
+        try {
+          var img = document.createElement("img"), b = p[0].getBoundingClientRect();
+          img.src = p[0].toDataURL("image/png");
+          Array.prototype.forEach.call(p[1].attributes, function (at) { img.setAttribute(at.name, at.value); });
+          img.style.width = b.width + "px"; img.style.height = b.height + "px";
+          p[1].parentNode.replaceChild(img, p[1]);
+        } catch (e) { /* tainted canvas: dan maar leeg */ }
+      });
+      try {
+        var adopted = document.adoptedStyleSheets || [];
+        if (adopted.length && kloon.querySelector("head")) {
+          var st = document.createElement("style");
+          st.textContent = adopted.map(function (sh) {
+            return Array.prototype.map.call(sh.cssRules, function (r) { return r.cssText; }).join("\n");
+          }).join("\n");
+          kloon.querySelector("head").appendChild(st);
+        }
+      } catch (e) {}
+      Array.prototype.forEach.call(kloon.querySelectorAll("script," + LA_UI_SEL), function (x) {
+        if (x.parentNode) x.parentNode.removeChild(x);
+      });
+      Array.prototype.forEach.call(kloon.getElementsByTagName("*"), function (x) {
+        for (var j = x.attributes.length - 1; j >= 0; j--) {
+          if (/^on/i.test(x.attributes[j].name)) x.removeAttribute(x.attributes[j].name);
+        }
+      });
+      Array.prototype.forEach.call(kloon.querySelectorAll("base"), function (x) { x.parentNode.removeChild(x); });
+      var head = kloon.querySelector("head");
+      if (head) {
+        var base = document.createElement("base");
+        base.setAttribute("href", document.baseURI);
+        head.insertBefore(base, head.firstChild);
+      }
+      var dt = document.doctype, doctype = "";
+      if (dt) {
+        doctype = "<!DOCTYPE " + dt.name + (dt.publicId ? ' PUBLIC "' + dt.publicId + '"' : "") +
+          (!dt.publicId && dt.systemId ? " SYSTEM" : "") + (dt.systemId ? ' "' + dt.systemId + '"' : "") + ">";
+      }
+      return {
+        html: doctype + kloon.outerHTML,
+        vw: de.clientWidth, vh: de.clientHeight,
+        sx: Math.round(scrollX), sy: Math.round(scrollY),
+        dpr: window.devicePixelRatio || 1
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   /* ---- opslaan / verwijderen ------------------------------------- */
   function bewaarAnnotatie(a) {
     laKoppelRegio(a);
     if (!anns.some(function (x) { return x.id === a.id; })) anns.push(a);
+    /* Regio die de bridge nog niet kent zonder snapshot (bv. via HtmlAnnotator.save):
+       dan geldt het moment van opslaan. Een bestaande annotatie krijgt er geen:
+       haar crop hoort bij het moment van de selectie. */
+    if (a.type === "region" && !laBijBridge[a.id] && !laSnaps[a.id]) {
+      var s0 = laSnapshot();
+      if (s0) laSnaps[a.id] = s0;
+    }
+    var snap = laSnaps[a.id] || null;
     bewaarLokaal(); render();
-    return post("/save", Object.assign(basis(), {
+    return post("/save", Object.assign(basis(), snap ? { snapshot: snap } : {}, {
       annotation: {
         id: a.id, type: a.type, rect: a.rect, comment: a.comment, target: a.target,
         selectedText: a.selectedText || null, locator: a.locator || null,
@@ -1476,6 +1578,7 @@
       }
     })).then(function (j) {
       brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
+      delete laSnaps[a.id]; laBijBridge[a.id] = true;
       a.nr = j.nr; bewaarLokaal(); render();
       zetStatus(true, j.count + " saved", j.jsonPath);
       return j;
@@ -1492,6 +1595,7 @@
 
   function verwijder(a) {
     anns = anns.filter(function (x) { return x.id !== a.id; });
+    delete laSnaps[a.id];
     bewaarLokaal(); render();
     return post("/delete", Object.assign(basis(), { id: a.id })).then(function (j) {
       brug.count = j.count;
@@ -1565,6 +1669,8 @@
         createdAt: new Date().toISOString()
       };
       laKoppelRegio(regio);
+      /* nu vastleggen wat de reviewer ziet, vóór er iets kan veranderen */
+      var snap = laSnapshot(); if (snap) laSnaps[regio.id] = snap;
       openPopup(regio);
     });
   }
