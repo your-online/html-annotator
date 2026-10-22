@@ -8,6 +8,32 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Region crops show what the reviewer saw. The bridge used to render the page
+  file freshly in headless Chrome at save time, so an opened `<details>`, a
+  scrolled container, filled-in fields and state set by page scripts were lost.
+  The snippet now takes a snapshot of the live DOM (plus viewport, scroll and
+  devicePixelRatio) at the moment of the selection and sends it once with
+  `/save` of a new region; the bridge renders that snapshot (`GET /snap/<token>`,
+  inside an iframe of the reviewer's viewport) and records `cropSource: "live"`.
+  Without a snapshot (older snippet, direct API call, a page opened as
+  `file://`) the old route stays, marked `cropSource: "file"`; a failed live
+  crop falls back to it for a new annotation and keeps the reason in
+  `liveCropError`, while an existing annotation keeps its crop. Editing a
+  comment keeps the crop of the selection moment, also after a reload. Saves
+  and deletes of one annotation run one after the other (a queue per id in the
+  snippet, a lock per id plus a delete tombstone in the bridge): an edit during
+  a slow crop wins without starting a second Chrome, and a delete during a
+  slow crop is not undone when that crop finishes. The
+  snapshot lives in memory only, never in localStorage, and is freed when its
+  popup is cancelled or replaced or its save fails (B44,
+  `tests/case-23-crop-live.mjs`, `tests/test_live_crop.py`).
+- The screenshot browser runs with its own throwaway profile
+  (`--user-data-dir` in a temp dir, removed afterwards) and
+  `--use-mock-keychain --password-store=basic`, so a crop never touches the
+  user's Chrome profile or triggers a macOS keychain prompt. Opt-in
+  `--no-sandbox` (B41) is unchanged. Chrome is waited for and then stopped with
+  its whole process tree before the profile is removed; only a complete PNG is
+  accepted (B45).
 - Continuous select (`continuous_select` in the config file,
   `HTML_ANNOTATOR_CONTINUOUS_SELECT` in the environment, on by default): after
   Save the region mode stays on, so the next region is one drag away instead
@@ -46,6 +72,28 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   all capabilities (B41).
 - Config key `root`: where rounds are written, like `HTML_ANNOTATOR_ROOT`,
   which still wins (B31).
+
+### Security
+
+- The live snapshot is treated as client input. The bridge sanitises it
+  (scripts, `on*` attributes, `javascript:` URLs, `iframe`/`object`/`embed`,
+  `<meta http-equiv>`, `<base>` out; password fields masked), serves it only
+  via `/snap/<token>` with a CSP header (`default-src 'none'`, only the nonce
+  script, `connect-src 'none'`), never as a `file://` document and never with
+  `--allow-file-access-from-files`, and live-renders it only for a `/save`
+  from its own origin (a `/p/` page). Origin `null` or any other origin gets
+  the file crop (B44, `docs/DECISIONS.md` 2026-10-21).
+
+### Fixed
+
+- Live crop: the render viewport stays the reviewer's (a `100vh` section no
+  longer grows when the selection runs below the view), the viewport is read
+  from the window instead of `documentElement` (quirks mode), the restore
+  script lands inside `<body>` also with characters whose lower case is
+  longer (U+0130), and the crop runs outside the bridge lock so `/session`
+  and `/delete` do not wait for Chrome. The snippet caps the snapshot at the
+  bridge's limit and skips very large canvases. File URLs come from one
+  helper (`Path.as_uri()`), so they are also right on Windows.
 
 ### Changed
 

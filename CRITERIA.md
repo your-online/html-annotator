@@ -592,6 +592,85 @@ re-enable fails); `tests/test_poort_config.py` (B43).
 
 </details>
 
+<details><summary><strong>B44 — A region crop shows what the reviewer saw when selecting.</strong></summary>
+
+*TESTED · platform: posix*
+
+*Expected behaviour:* given a page via `/p/` where the reviewer opened a
+`<details>`, scrolled an `overflow:auto` container, triggered a page script
+that changed an element, and scrolled the window under a `position:fixed`
+header, a region selection over each of those yields a crop that shows that
+live state and matches a screenshot of the live page (same box, annotator UI
+hidden), also at devicePixelRatio 2. The record carries
+`cropSource: "live"`. A change to the page between selection and Save does
+not reach the crop. The snapshot never lands in localStorage, and is freed
+when its popup is cancelled, replaced by another selection, or its save
+fails. Editing the comment keeps the crop of the selection moment, also
+after a reload; deleting the annotation deletes its crop file and leaves the
+others. The viewport sent is the window, also in quirks mode; the render
+viewport is always the reviewer's (a `100vh` section stays one viewport
+high when the selection runs below it). A selection larger than the
+viewport, a broken or too large snapshot (`SNAP_MAX`, same limit in the
+snippet) or a failed live crop gives `cropSource: "file"` plus
+`liveCropError` for a new annotation; an existing annotation keeps its crop.
+A new crop replaces the old file only once it succeeded. The crop runs
+outside the bridge lock: `/session` answers during a slow crop. Saves and
+deletes of one annotation run one after the other: an edit during a slow crop
+wins without a second crop, and a delete during a slow crop is not undone
+when that crop finishes.
+
+Security, as properties: the bridge sanitises the snapshot (no `script`,
+`on*`, `javascript:` URLs, `iframe`/`object`/`embed`, `<meta http-equiv>`,
+`<base>`; password fields masked); `/snap/<token>` answers with a CSP header
+(`default-src 'none'`, `script-src` only the nonce, `connect-src 'none'`)
+and only while the bridge renders it (404 afterwards); a snapshot is never
+rendered as a `file://` document or with `--allow-file-access-from-files`;
+only a `/save` from the bridge's own origin is live-rendered (Origin `null`,
+another origin or none: file crop with `liveCropError`).
+
+*Evidence:* `tests/case-23-crop-live.mjs` (browser); `tests/test_live_crop.py`
+(fake Chrome: sanitiser, CSP, origin, token lifetime, viewport, lock, keep on
+failure, process tree, delete/edit during a slow crop). Mutants that turn them red: no snapshot at selection,
+`laBijBridge` not set after a reload, snapshot not freed on a replaced popup
+or failed save, viewport from `documentElement`, `SNAPS.pop` removed,
+sanitiser as no-op, origin not checked, `</body>` found via `lower()`, crop
+under the lock, existing crop not kept, viewport allowed to grow, `file://`
+render restored, CSP without `connect-src`, no password mask, file crop
+failure without keeping the existing crop, no delete tombstone, no per-id
+lock, no per-id queue in the snippet. Decisions in
+`docs/DECISIONS.md` (2026-10-09, 2026-10-21).
+
+*Gap:* shadow DOM, cross-origin iframes, `blob:` images, `:hover` and focus
+are not captured. A page opened as `file://` gets the file crop (no live
+state). A selection larger than the viewport gets the file crop. External
+assets load only over `https:`. Canvases above 4096×4096 pixels stay empty
+in the crop. Pages that still embed an older snippet keep the old crop until
+they are re-embedded. On Windows a Chrome child that outlives its parent is
+not stopped (`taskkill /T` needs the parent); not tested on Windows.
+
+</details>
+
+<details><summary><strong>B45 — The screenshot browser never touches the user's profile or keychain.</strong></summary>
+
+*TESTED · platform: posix*
+
+*Expected behaviour:* every headless Chrome run for a crop gets its own
+`--user-data-dir` in a temp directory that is gone afterwards, plus
+`--use-mock-keychain` and `--password-store=basic`, so macOS shows no
+"Chrome Safe Storage" keychain prompt. `--no-sandbox` is still added only as
+root or with `chrome_no_sandbox` / `HTML_ANNOTATOR_CHROME_NO_SANDBOX=1` (B41).
+Chrome is waited for; once the PNG is complete it gets a short grace period
+and is then stopped with its whole process tree, and only then is the
+profile removed. A PNG that is not complete (no `IEND`) is never accepted,
+also when Chrome exits 0.
+
+*Evidence:* `tests/case-23-crop-live.mjs` (fake Chrome records its argv;
+mutant without the keychain flags fails); `tests/test_live_crop.py` (a fake
+Chrome that never exits and has a child: tree stopped, profile gone; half a
+PNG refused; mutants without the tree kill or the PNG check fail).
+
+</details>
+
 <details><summary><strong>B46 — A rich draft edit keeps its formatting after a reload.</strong></summary>
 
 *TESTED · platform: posix (browser)*
