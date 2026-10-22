@@ -224,22 +224,41 @@
    regio-snip · tekstselectie · draft/hunks · HtmlAnnotator · sessie-links */
 (function () {
   "use strict";
-  /* Via /p/ is de bridge de eigen origin, op welke poort ook. file:// valt terug op
-     de standaardpoort (best effort: Chrome blokkeert file:// naar loopback toch al). */
-  var OP_BRIDGE_P = location.protocol.indexOf("http") === 0 && location.pathname.indexOf("/p/") === 0;
-  /* Een server die de pagina elders publiceert (sandbox, origin null: de lokale bridge
-     is daar onbereikbaar) kan <meta name="html-annotator-endpoint" content="https://...">
-     injecteren. Dan schrijft het snippet daarheen, met dezelfde routes als de bridge.
-     Alleen http(s); op een /p/-pagina van de bridge wordt de meta genegeerd. */
-  var ENDPOINT = (function () {
-    if (OP_BRIDGE_P) return null;
-    var m = document.querySelector('meta[name="html-annotator-endpoint"]');
+  /* LA-BRIDGE-KEUZE · de enige bron voor de schrijfroute en de pagina-identiteit.
+     bin/agenda-preview.py plakt dit blok letterlijk in de agenda-pagina; het
+     checklist-snippet vraagt de route op via HtmlAnnotator.bridgeRoute()
+     (docs/DECISIONS.md, 2026-10-21). Volgorde:
+     1. een /p/-pagina VAN DE BRIDGE (loopback-host én /p/-pad) praat met de eigen
+        origin, op welke poort ook, en negeert de endpoint-meta;
+     2. anders wint <meta name="html-annotator-endpoint" content="https://..."> (een
+        server die de pagina elders publiceert: sandbox, origin null). Alleen http(s),
+        een slash aan het eind gaat eraf;
+     3. anders de standaardpoort (file://: best effort, Chrome blokkeert file:// naar
+        loopback toch al). */
+  function laBridgeKeuze() {
+    var opP = location.protocol.indexOf("http") === 0 &&
+      /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname) && location.pathname.indexOf("/p/") === 0;
+    var m = opP ? null : document.querySelector('meta[name="html-annotator-endpoint"]');
     var u = m && m.getAttribute("content");
-    return u && /^https?:\/\//.test(u) ? u.replace(/\/+$/, "") : null;
-  })();
-  var BRIDGE = ENDPOINT ? ENDPOINT : OP_BRIDGE_P
-    ? (location.protocol + "//" + location.host)
-    : "http://127.0.0.1:8791";
+    var ep = u && /^https?:\/\//.test(u) ? u.replace(/\/+$/, "") : null;
+    return { origin: ep || (opP ? location.protocol + "//" + location.host : "http://127.0.0.1:8791"), remote: !!ep };
+  }
+  function slug() { return (document.title || location.pathname).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "pagina"; }
+  function paginaBestand() {
+    if (location.protocol === "file:") {
+      try { return decodeURIComponent(location.pathname); } catch (e) { return location.pathname; }
+    }
+    /* via de bridge geserveerd: http://127.0.0.1:<poort>/p/<pad-vanaf-pagina-root> */
+    var m = location.pathname.match(/^\/p\/(.+)$/);
+    if (m && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) {
+      try { return "~/" + decodeURIComponent(m[1]); } catch (e) { return "~/" + m[1]; }
+    }
+    return null;
+  }
+  /* /LA-BRIDGE-KEUZE */
+  var KEUZE = laBridgeKeuze();
+  var ENDPOINT = KEUZE.remote ? KEUZE.origin : null;
+  var BRIDGE = KEUZE.origin;
   function opgeslagen(n) { return ENDPOINT ? n + " saved remotely" : n + " saved"; }
   function uitTekst() { return ENDPOINT ? "endpoint unreachable - localStorage only" : "bridge off - localStorage only"; }
   function uitTitel() { return ENDPOINT ? "The annotation endpoint did not answer; reload the page (its token may have expired)."
@@ -257,18 +276,6 @@
   var doorlopend = true, doorlopendEnv = false;
   function bewaarLokaal() { try { localStorage.setItem(KEY, JSON.stringify(anns)); } catch (e) {} }
   function el(tag, css, ouder) { var d = document.createElement(tag); if (css) d.style.cssText = css; (ouder || document.body).appendChild(d); return d; }
-  function slug() { return (document.title || location.pathname).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "pagina"; }
-  function paginaBestand() {
-    if (location.protocol === "file:") {
-      try { return decodeURIComponent(location.pathname); } catch (e) { return location.pathname; }
-    }
-    /* via de bridge geserveerd: http://127.0.0.1:<poort>/p/<pad-vanaf-pagina-root> */
-    var m = location.pathname.match(/^\/p\/(.+)$/);
-    if (m && (location.hostname === "127.0.0.1" || location.hostname === "localhost")) {
-      try { return "~/" + decodeURIComponent(m[1]); } catch (e) { return "~/" + m[1]; }
-    }
-    return null;
-  }
   function domHash() {
     var h = 5381, s = document.body ? document.body.innerText || "" : "";
     for (var i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; }
@@ -2989,6 +2996,9 @@
     save: bewaarAnnotatie,
     remove: verwijder,
     resolve: markeerVerwerkt,
+    /* De schrijfroute van deze pagina ({origin, remote}); het checklist-snippet
+       gebruikt hem, zodat de keuze maar op één plek staat. */
+    bridgeRoute: laBridgeKeuze,
     /* Alleen case-08; geen publieke API. */
     _test: {
       zoekAnker: zoekAnker,

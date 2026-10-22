@@ -264,28 +264,35 @@ move start or end (15-minute snap, minimum 15 minutes, mouse and touch).
 A live time label follows the pointer; a red border warns when a proposal
 overlaps an existing event, but nothing blocks. Every change autosaves via
 the bridge into the page's `state.json` (component `agenda`, key
-`voorstel-<nr>`: `{start, end, base, changedAt}`); the pill next to the week
-range says `opgeslagen` or `bridge uit`. On load the page applies that state
-over the overlay and marks the block `verplaatst` (old time and a
-`terug naar voorstel` button in the popover).
+`voorstel-<nr>`: `{start, end, base, changedAt}`), along the same route as
+the annotator snippet (own origin on a bridge `/p/` page, else the
+`html-annotator-endpoint` meta, else the default port) and under the slug
+of the `-o` file, also outside `/p/`. The pill next to the week range says
+`saved` or `bridge off`. On load the page applies that state over the
+overlay as long as `base` still equals the overlay time, and marks the
+block `moved` (old time and a `back to proposal` button in the popover).
+The page UI is English.
 
 Before every next step (presenting the proposals again, or sending
 invites), run the sync first and only then read the overlay:
 
 ```bash
-python3 bin/agenda-sync.py <page>.voorstellen.json   # --page <page>.html if named differently; --dry-run to look
+python3 bin/agenda-spec.py --apply-state <page>.voorstellen.json   # --page <page>.html if named differently; --dry-run to look
 ```
 
-It writes moved times into the overlay with `notitie` "door <name> verplaatst
-van X naar Y". The name is `--by <name>`, else the overlay field `movedBy`,
-else `reviewer`. It skips a proposal whose overlay you changed after the drag
-(and says so), ignores drags on proposals that are no longer `open` (the
-real calendar leads once sent), and is a no-op when nothing moved. Then
-re-render with the build commands above: the page shows the same times,
-without the `verplaatst` label. On `.`, processing the annotations and this
-sync are one move: sync first, then apply the annotations to the synced
-overlay, then re-render once. `agenda-sync.py` is a short alias of
-`agenda-spec.py --apply-state`.
+It writes moved times into the overlay with `notitie` "moved by <name>
+from X to Y". The name is `--by <name>`, else the overlay field `movedBy`,
+else `reviewer`. It stops when the page file does not exist (pass the
+`-o` file as `--page`), skips a proposal whose overlay you changed after
+the drag (and says so), ignores drags on proposals that are not open on
+the page (the real calendar leads once sent, also when the page derived
+"sent" from a real event) or in the overlay, and is a no-op when nothing
+moved. An applied drag gets `base` = the new time in `state.json`, so it
+is never applied again, also not after you move that proposal yourself.
+Then re-render with the build commands above: the page shows the same
+times, without the `moved` label. On `.`, processing the annotations and
+this sync are one move: sync first, then apply the annotations to the
+synced overlay, then re-render once.
 
 ## Processing (short port)
 

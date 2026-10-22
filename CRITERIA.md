@@ -689,20 +689,43 @@ fields in `uitBridge` fails).
 
 *TESTED · platform: all (sync), posix (browser)*
 
-*Expected behaviour:* in the agenda preview only proposals with status
-`open` can be dragged (move, top and bottom grips, 15-minute snap). Each
-change is saved through the bridge as component `agenda`, key
-`voorstel-<nr>`, `{start, end, base}`; after a reload the page shows the
-dragged time. `agenda-sync.py` / `agenda-spec.py --apply-state` writes the
-new time into the overlay with the note "door <name> verplaatst van X naar
-Y" (`--by` > overlay `movedBy` > `reviewer`), keeps an existing note,
-skips a proposal whose overlay changed after the drag and any proposal that
-is no longer `open`, writes nothing with `--dry-run`, and is a no-op the
+*Expected behaviour:* in the agenda preview only proposals that are open
+on the page can be dragged (not `verstuurd`/`vervallen` in the overlay, and
+not when the page derived "sent" from a real event with the same title and
+start): move, a top grip that changes only the start, a bottom grip that
+changes only the end, 15-minute snap, `pointercancel` ends the drag where
+it is, a red border on overlap with an existing event, and `back to
+proposal` in the popover. Each change is saved through the bridge as
+component `agenda`, key `voorstel-<nr>`, `{start, end, base}`, with the
+page identity (`page`, `pageFile`, `slug` of the `-o` file, `title`), so
+the state lands in `<root>/<slug>/state.json` also outside `/p/`. Per key
+at most one save is in flight; the newest value wins on a slow bridge. On
+load the state is applied only to open proposals the reviewer has not
+touched yet, only while `base` equals the overlay, and never re-renders
+during a drag (it waits for the drop). The pill reads `autosave on`,
+`saved HH:MM`, `bridge off` or `bridge off · not saved`; the page UI is
+English. `agenda-spec.py --apply-state` stops when the page file does not
+exist, writes the new time into the overlay with the note "moved by
+<name> from X to Y" (`--by` > overlay `movedBy` > `reviewer`), keeps an
+existing note, skips a proposal whose overlay changed after the drag and
+any proposal that is not open in the overlay or on the page, sets `base`
+to the new time in the state after writing (the drag is processed and
+never applied again), writes nothing with `--dry-run`, and is a no-op the
 second time. No real calendar is touched.
 
-*Evidence:* `tests/test_agenda.py` (no bridge: falls back to
-`<root>/<slug>/state.json`); `tests/case-25-agenda-slepen.mjs` (real drag
-on a `/p/` page of an ephemeral bridge, then `agenda-sync.py`).
+*Known gaps:* the derived status comes from the page as last rendered: an
+invite sent after the last render is only seen once the page is
+re-rendered (or the overlay says `verstuurd`). After a sync and before
+the re-render, a reload of the old page shows the old overlay time (its
+`base` no longer matches); the handbook says to re-render right after the
+sync. The checklist snippet still sends only `page` as identity, so on a
+dev server (not `/p/`, not `file://`) its state lands under the default
+slug `pagina`.
+
+*Evidence:* `tests/test_agenda.py` (no bridge: falls back to the bridge's
+own handlers on `<root>/<slug>/state.json`); `tests/case-25-agenda-slepen.mjs`
+(real drags on a `/p/` page of an ephemeral bridge and on a local dev
+server with the endpoint meta, then `agenda-spec.py --apply-state`).
 
 </details>
 
@@ -710,14 +733,20 @@ on a `/p/` page of an ephemeral bridge, then `agenda-sync.py`).
 
 *TESTED · platform: posix (browser)*
 
-*Expected behaviour:* with an `http(s)` value and outside `/p/`, the
-annotator snippet sends `/session`, `/save` and the other routes to that
-URL (trailing slash stripped) and never to the local bridge; the pill reads
-"N saved remotely". The checklist snippet sends `/state` and `/state-save`
-there too. Without the meta (`file://`) the target stays
-`http://127.0.0.1:8791` and the pill "N saved"; a non-http value is
-ignored; on a `/p/` page of the bridge the bridge stays in charge, meta or
-not.
+*Expected behaviour:* with an `http(s)` value, on any page that is not a
+`/p/` page of the bridge itself (a loopback host `127.0.0.1`, `localhost`
+or `[::1]` and a `/p/` path), the annotator snippet sends `/session`,
+`/save`, `/resolve`, `/delete`, `/state`, `/state-save` and the other
+routes to that URL (trailing slash stripped) and never to the local
+bridge; the pill reads "N saved remotely". The checklist snippet and the
+agenda preview send `/state` and `/state-save` there too. A `/p/` path on
+another host does not count as the bridge. Without the meta (`file://`)
+the target stays `http://127.0.0.1:8791` and the pill "N saved"; a
+non-http value is ignored; on a `/p/` page of the bridge the bridge stays
+in charge, meta or not. The rule lives once (block `LA-BRIDGE-KEUZE` in
+the annotator snippet); the agenda preview inlines it at build time, the
+checklist asks `HtmlAnnotator.bridgeRoute()` and only falls back to a short
+copy when the annotator is not on the page.
 
 *Evidence:* `tests/case-26-endpoint-meta.mjs` (the remote server is
 simulated with `page.route`).

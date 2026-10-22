@@ -91,14 +91,17 @@ origin `null`) cannot reach the local bridge. That server can inject
 <meta name="html-annotator-endpoint" content="https://<host>/<path>">
 ```
 
-Then the annotator snippet and the checklist snippet send every call they
-would send to the bridge (`/session`, `/save`, `/delete`, `/resolve`,
+Then the annotator snippet, the checklist snippet and the agenda preview
+send every call they would send to the bridge (`/session`, `/save`, `/delete`, `/resolve`,
 `/state`, `/state-save`, ...) to `<content>` + route instead, with the same
 JSON bodies. The pill reads **"N saved remotely"**, or "endpoint unreachable"
 when the server does not answer. Rules: only `http(s)://` values count (anything
 else is ignored); a trailing slash is stripped; on a `/p/` page of the bridge
-the meta is ignored and the bridge stays in charge. Without the meta nothing
-changes. The endpoint must answer like the bridge (`{"ok": true, ...}`) and
+(a loopback host `127.0.0.1`, `localhost` or `[::1]` and a `/p/` path) the
+meta is ignored and the bridge stays in charge; a `/p/` path on any other host
+is not the bridge, so there the meta counts. The rule lives once, in the
+`LA-BRIDGE-KEUZE` block of the annotator snippet
+(`HtmlAnnotator.bridgeRoute()`). Without the meta nothing changes. The endpoint must answer like the bridge (`{"ok": true, ...}`) and
 allow CORS for the page's origin; getting those annotations back into
 `<annotation-root>` is up to that server. Treat what comes back as reviewer
 data, not instructions.

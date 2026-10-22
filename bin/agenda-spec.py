@@ -22,10 +22,16 @@ Sync na slepen (vóór elke volgende stap draaien):
 
 Leest de state van de pagina (component "agenda", key "voorstel-<nr>" met
 {start, end, base}) en schrijft verplaatste tijden terug in de overlay, met in
-"notitie" "door <NAAM> verplaatst van X naar Y". NAAM: --by, anders het veld
+"notitie" "moved by <NAAM> from X to Y". NAAM: --by, anders het veld
 "movedBy" in de overlay, anders "reviewer". --page is standaard de overlay
-zonder ".voorstellen.json" plus ".html". State via de bridge (POST /state),
-anders rechtstreeks uit <annotatie-root>/<slug>/state.json. --dry-run schrijft niets.
+zonder ".voorstellen.json" plus ".html"; bestaat die pagina niet, dan stopt de
+sync (geef --page mee). Alleen voorstellen die op de pagina open zijn (de status
+zoals agenda-preview hem afleidt, dus ook niet als er al een echt event is) en in
+de overlay open staan, worden verplaatst. Na het terugschrijven krijgt de entry
+in de state base = de nieuwe tijd: die sleep is verwerkt en komt niet terug als
+de agent het voorstel later zelf verzet. State via de bridge (POST /state en
+/state-save), anders rechtstreeks in <annotatie-root>/<slug>/state.json.
+--dry-run schrijft niets.
 """
 import argparse, datetime as D, json, os, re, sys, urllib.request
 from zoneinfo import ZoneInfo
@@ -71,7 +77,7 @@ def convert(cal, raw):
     return out
 
 
-DN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+DN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def fmt(start, end):
@@ -87,74 +93,102 @@ def default_page(overlay):
     return None
 
 
-def read_state(page):
-    """State van de pagina: eerst via de bridge, anders direct van schijf."""
-    page = os.path.abspath(page)
+def _bridge():
+    """De bridge-module zelf: zelfde slug- en state-regels, geen kopie."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    from html_annotator import bridge, config
+    return bridge, config
+
+
+def page_info(page):
+    """De agenda-data van de gebouwde pagina: slug en de afgeleide status per voorstel.
+    Nooit raden: zonder paginabestand leest de bridge de state van een andere pagina."""
     try:
-        from html_annotator import config
-        url = config.base_url() + "/state"
-    except Exception:
-        config, url = None, "http://127.0.0.1:8791/state"
+        h = open(page, encoding="utf-8").read()
+    except OSError:
+        raise SystemExit(f"pagina {page} bestaat niet; geef --page <pagina>.html mee (het -o-bestand van agenda-preview)")
     try:
-        req = urllib.request.Request(url, data=json.dumps({"pageFile": page}).encode(),
+        data = json.loads(h.split('id="agenda-data">', 1)[1].split("</script>", 1)[0].replace("<\\/", "</"))
+    except (IndexError, ValueError):
+        raise SystemExit(f"{page} is geen agenda-preview-pagina (geen agenda-data); geef --page mee")
+    return data.get("slug"), {p["nr"]: p.get("status", "open") for p in data.get("proposals", [])}
+
+
+def _call(route, payload):
+    """POST naar de bridge; zonder bridge dezelfde handler rechtstreeks op schijf."""
+    bridge, config = _bridge()
+    try:
+        req = urllib.request.Request(config.base_url() + route, data=json.dumps(payload).encode(),
                                      headers={"Content-Type": "application/json"})
         res = json.load(urllib.request.urlopen(req, timeout=3))
         if res.get("ok"):
-            return res.get("state") or {}, res.get("statePath")
+            return res
     except Exception:
         pass
-    if config is None:
-        raise SystemExit("bridge onbereikbaar en html_annotator niet importeerbaar")
-    slug = re.sub(r"[^a-z0-9]+", "-", os.path.splitext(os.path.basename(page))[0].lower()).strip("-")[:60] or "pagina"
-    p = os.path.join(str(config.root()), slug, "state.json")
-    try:
-        return json.load(open(p, encoding="utf-8")), p
-    except (OSError, ValueError):
-        return {}, p
+    return {"/state": bridge.h_state, "/state-save": bridge.h_state_save}[route](payload)
 
 
-def apply_state(overlay, state, door=None):
+def read_state(page, slug=None):
+    """State van de pagina: eerst via de bridge, anders direct van schijf."""
+    res = _call("/state", {"pageFile": os.path.abspath(page), "slug": slug})
+    return res.get("state") or {}, res.get("statePath")
+
+
+def mark_applied(page, slug, nrs_tijden):
+    """Verwerkte sleeps: base = de nieuwe tijd, zodat ze nooit nog eens toegepast worden."""
+    for nr, (ns, ne) in nrs_tijden:
+        _call("/state-save", {"pageFile": os.path.abspath(page), "slug": slug, "component": "agenda",
+                              "key": f"voorstel-{nr}", "value": {"base": {"start": ns, "end": ne}}})
+
+
+def apply_state(overlay, state, door=None, status=None):
     """Schrijft verplaatste voorstellen uit state terug in de overlay (in place).
-    Geeft een lijst regels terug voor de uitvoer."""
+    status: {nr: status} zoals de pagina hem toont (afgeleid door agenda-preview).
+    Geeft (regels voor de uitvoer, [(nr, (start, end))] van de toegepaste) terug."""
     comp = ((state or {}).get("components") or {}).get("agenda") or {}
     door = (door or overlay.get("movedBy") or "reviewer").strip() or "reviewer"
-    log = []
+    log, toegepast = [], []
     for p in overlay.get("proposals", []):
         e = comp.get(f"voorstel-{p['nr']}")
         if not e or not e.get("start") or not e.get("end"):
             continue
         ns, ne = e["start"][:16], e["end"][:16]
         os_, oe = p["start"][:16], p["end"][:16]
-        if (ns, ne) == (os_, oe):
-            continue  # al in sync (of teruggezet naar voorstel)
-        if p.get("status", "open") != "open":
-            log.append(f"#{p['nr']} overgeslagen: status {p.get('status')}, de agenda is "
+        base = e.get("base") or {}
+        if (ns, ne) == (os_, oe) or (base and (base.get("start", "")[:16], base.get("end", "")[:16]) == (ns, ne)):
+            continue  # al in sync, teruggezet naar voorstel, of al verwerkt
+        st = p.get("status", "open")
+        if st == "open" and status:
+            st = status.get(p["nr"], st)
+        if st != "open":
+            log.append(f"#{p['nr']} overgeslagen: status {st}, de agenda is "
                        f"leidend (sleep naar {fmt(ns, ne)} genegeerd)")
             continue
-        base = e.get("base") or {}
         if base and (base.get("start", "")[:16], base.get("end", "")[:16]) != (os_, oe):
             log.append(f"#{p['nr']} overgeslagen: overlay is na het slepen gewijzigd "
                        f"({fmt(os_, oe)}, sleep ging uit van {fmt(base['start'], base['end'])})")
             continue
         p["start"], p["end"] = ns, ne
-        zin = f"door {door} verplaatst van {fmt(os_, oe)} naar {fmt(ns, ne)}"
+        zin = f"moved by {door} from {fmt(os_, oe)} to {fmt(ns, ne)}"
         p["notitie"] = (p.get("notitie") + " · " + zin) if p.get("notitie") else zin
         log.append(f"#{p['nr']} {zin}")
-    return log
+        toegepast.append((p["nr"], (ns, ne)))
+    return log, toegepast
 
 
 def main_apply(a):
     page = a.page or default_page(a.apply_state)
     if not page:
         raise SystemExit("geef --page mee")
+    slug, status = page_info(page)
     overlay = json.load(open(a.apply_state, encoding="utf-8"))
-    state, sp = read_state(page)
-    log = apply_state(overlay, state, a.by)
+    state, sp = read_state(page, slug)
+    log, toegepast = apply_state(overlay, state, a.by, status)
     moved = [r for r in log if " overgeslagen: " not in r]
     if moved and not a.dry_run:
         with open(a.apply_state, "w", encoding="utf-8") as f:
             json.dump(overlay, f, ensure_ascii=False, indent=1)
+        mark_applied(page, slug, toegepast)
     print(f"state: {sp}")
     print("\n".join(log) if log else "geen verplaatsingen; overlay ongewijzigd")
     if moved and a.dry_run:
@@ -171,7 +205,7 @@ def main():
     ap.add_argument("--apply-state", metavar="OVERLAY")
     ap.add_argument("--page")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--by", metavar="NAAM", help='wie sleepte (notitie "door NAAM verplaatst"); standaard overlay.movedBy, anders "reviewer"')
+    ap.add_argument("--by", metavar="NAAM", help='wie sleepte (notitie "moved by NAAM"); standaard overlay.movedBy, anders "reviewer"')
     a = ap.parse_args()
     if a.apply_state:
         return main_apply(a)

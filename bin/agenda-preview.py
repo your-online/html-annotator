@@ -27,6 +27,11 @@ boven/onder voor begin/eind, snap 15 min). Elke wijziging gaat via de bridge
 naar state.json (component "agenda", key "voorstel-<nr>": {start, end, base});
 bij laden wint die state van de overlay zolang base nog gelijk is aan de
 overlay. Terugschrijven in de overlay: agenda-spec.py --apply-state.
+De route naar de bridge is die van het annotator-snippet (blok LA-BRIDGE-KEUZE,
+bij het bouwen ingeplakt): een /p/-pagina van de bridge praat met de eigen
+origin, anders wint <meta name="html-annotator-endpoint">, anders de
+standaardpoort. De pagina stuurt de slug van het -o-bestand mee, zodat de state
+ook buiten /p/ onder <annotatie-root>/<slug>/state.json landt.
 
 Een voorstel met status verstuurd vervangt het echte event met dezelfde titel
 en start (±1 min) en neemt daarvan deelnemers + reacties over.
@@ -35,6 +40,16 @@ import argparse, datetime as D, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SNIPPET = os.path.join(HERE, "..", "references", "annotator-snippet.html")
+sys.path.insert(0, os.path.join(HERE, ".."))
+from html_annotator.bridge import slugify  # noqa: E402  zelfde slug als de bridge
+
+
+def bridge_keuze():
+    """Het blok LA-BRIDGE-KEUZE uit het annotator-snippet: route + pagina-identiteit.
+    Eén bron voor snippet en agenda-pagina (docs/DECISIONS.md, 2026-10-21)."""
+    s = open(SNIPPET, encoding="utf-8").read()
+    i, j = s.index("/* LA-BRIDGE-KEUZE"), s.index("/* /LA-BRIDGE-KEUZE */")
+    return s[i:j]
 
 
 def P(s):
@@ -101,7 +116,7 @@ def build(spec):
     start = D.date.fromisoformat(spec.get("start") or min(x["start"] for x in out + props)[:10])
     start -= D.timedelta(days=start.weekday())
     return {
-        "title": spec.get("title", "Agenda-preview"),
+        "title": spec.get("title", "Agenda preview"),
         "heading": spec.get("heading", ""),
         "subheading": spec.get("subheading", ""),
         "start": start.isoformat(),
@@ -190,7 +205,7 @@ JS = r"""
 (function(){
 const S=JSON.parse(document.getElementById('agenda-data').textContent);
 const H0=S.hours[0],H1=S.hours[1],PX=60,LANE=24,BG=S.bgMinHours*60;
-const DN=['zo','ma','di','wo','do','vr','za'],MN=['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'],MF=['Januari','Februari','Maart','April','Mei','Juni','Juli','Augustus','September','Oktober','November','December'];
+const DN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],MF=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const P=s=>{const m=s.match(/(\d+)-(\d+)-(\d+)(?:T(\d+):(\d+))?/);return new Date(+m[1],m[2]-1,+m[3],+(m[4]||0),+(m[5]||0))};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pad=n=>String(n).padStart(2,'0'),hm=d=>pad(d.getHours())+':'+pad(d.getMinutes());
@@ -198,7 +213,7 @@ const day0=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate());
 const addD=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n);
 const same=(a,b)=>a.getTime()===b.getTime();
 const mins=(a,b)=>(b-a)/60000;
-const CAL={};S.calendars.forEach(c=>CAL[c.id]=c);CAL.prop={id:'prop',label:'voorstel',color:'prop'};
+const CAL={};S.calendars.forEach(c=>CAL[c.id]=c);CAL.prop={id:'prop',label:'proposal',color:'prop'};
 const all=S.events.concat(S.proposals).map(x=>Object.assign({},x,{s:P(x.start),e:P(x.end)}));
 all.forEach(x=>{if(x.kind==='prop'){x.os=x.s;x.oe=x.e;}});
 const L16=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
@@ -210,11 +225,11 @@ const W0=P(S.start),NW=S.weeks;
 const col=x=>x.kind==='prop'?'':('c-'+((CAL[x.cal]||{}).color||'gray'));
 const cssc=c=>'background:var(--'+c+'-bg);color:var(--'+c+'-fg);border-color:var(--'+c+'-bd)';
 document.head.insertAdjacentHTML('beforeend','<style>'+['purple','orange','blue','green','gray','red'].map(c=>'.c-'+c+'{'+cssc(c)+'}').join('')+'</style>');
-const SL={open:'voorstel',verstuurd:'verstuurd',vervallen:'vervallen'};
+const SL={open:'proposal',verstuurd:'sent',vervallen:'dropped'};
 const BGM=x=>x.kind!=='prop'&&!x.top&&mins(x.s,x.e)>=BG;
 const clash=x=>x.kind==='prop'&&x.status==='open'&&all.some(y=>y.kind!=='prop'&&!y.top&&!BGM(y)&&y.s<x.e&&y.e>x.s);
 const canDrag=x=>x.kind==='prop'&&x.status==='open'&&!x.top;
-const badge=x=>x.kind==='prop'?(moved(x)?'<span class="mv">↕<span class="full"> verplaatst</span></span>':'')+'<span class="badge">#'+x.nr+'<span class="full"> '+SL[x.status]+'</span></span>':(x.tag?'<span class="badge">'+esc(x.tag)+'</span>':'');
+const badge=x=>x.kind==='prop'?(moved(x)?'<span class="mv">↕<span class="full"> moved</span></span>':'')+'<span class="badge">#'+x.nr+'<span class="full"> '+SL[x.status]+'</span></span>':(x.tag?'<span class="badge">'+esc(x.tag)+'</span>':'');
 const cls=x=>(x.kind==='prop'?'k-prop s-'+x.status+(canDrag(x)?' drag':'')+(clash(x)?' clash':''):col(x))+(x.tag?' tagged':'');
 // --- render
 const wrap=document.getElementById('weeks');let secs=[],cur=0;
@@ -225,7 +240,7 @@ for(let w=0;w<NW;w++){
   html+='<div class="grid"><div></div>'+days.map(d=>'<div class="dh'+(same(d,today)?' today':'')+'">'+DN[d.getDay()]+' <b>'+d.getDate()+'</b></div>').join('')+'</div>';
   // hele-dag-rij
   const we=addD(ws,7),ad=all.filter(x=>x.top&&x.s<we&&x.e>ws).sort((a,b)=>a.s-b.s||b.e-a.e),rows=[];
-  html+='<div class="grid"><div class="lbl">hele dag</div><div class="adwrap">';
+  html+='<div class="grid"><div class="lbl">all day</div><div class="adwrap">';
   ad.forEach(x=>{const a=Math.max(0,Math.round((day0(x.s)-ws)/864e5)),b=Math.min(6,Math.round((day0(new Date(x.e-60000))-ws)/864e5));
     let r=0;while(rows[r]&&rows[r].some(([p,q])=>!(b<p||a>q)))r++;(rows[r]=rows[r]||[]).push([a,b]);
     const tm=x.allDay?'':' · '+DN[x.s.getDay()]+' '+hm(x.s)+' → '+DN[x.e.getDay()]+' '+hm(x.e);
@@ -253,7 +268,7 @@ for(let w=0;w<NW;w++){
 }
 wrap.innerHTML=html;secs=[...wrap.querySelectorAll('.week')];
 S.proposals.forEach(q=>{const x=BY[q.id],r=document.querySelector('tr.prow[data-pid="'+q.id+'"] td:nth-child(2)');
-  if(x&&r)r.innerHTML=DN[x.s.getDay()]+' '+pad(x.s.getDate())+'-'+pad(x.s.getMonth()+1)+'<br>'+hm(x.s)+'–'+hm(x.e)+(moved(x)?'<div class="note">verplaatst</div>':'');});
+  if(x&&r)r.innerHTML=DN[x.s.getDay()]+' '+pad(x.s.getDate())+'-'+pad(x.s.getMonth()+1)+'<br>'+hm(x.s)+'–'+hm(x.e)+(moved(x)?'<div class="note">moved</div>':'');});
 }
 render();
 // --- week-navigatie + now-lijn
@@ -269,27 +284,27 @@ show(cur);now();setInterval(now,60000);
 function rerender(){render();show(cur);now();}
 // --- popover
 const pop=document.getElementById('pop');let selEl=null;
-const RS={accepted:['geaccepteerd','ok'],tentativelyAccepted:['voorlopig',''],declined:['afgewezen','no'],organizer:['organisator','ok'],none:['geen reactie',''],notResponded:['geen reactie','']};
-const SA={busy:'bezet',free:'vrij',oof:'afwezig',tentative:'voorlopig',workingElsewhere:'elders aan het werk'};
-const person=p=>'<li>'+esc(p.name||p.address)+(p.name&&p.address?' <span class="a">'+esc(p.address)+'</span>':'')+(p.type==='optional'?' <span class="r">(optioneel)</span>':'')+(p.response&&RS[p.response]?' <span class="r '+RS[p.response][1]+'">· '+RS[p.response][0]+'</span>':'')+'</li>';
-function when(x){const d=x.s,e=x.e;if(x.allDay){const l=addD(e,-1);return DN[d.getDay()]+' '+d.getDate()+' '+MN[d.getMonth()]+(same(day0(l),day0(d))?'':' – '+DN[l.getDay()]+' '+l.getDate()+' '+MN[l.getMonth()])+' · hele dag';}
-  const m=mins(d,e),dur=m>=60?(Math.floor(m/60)+' u'+(m%60?' '+(m%60)+' min':'')):m+' min';
+const RS={accepted:['accepted','ok'],tentativelyAccepted:['tentative',''],declined:['declined','no'],organizer:['organizer','ok'],none:['no response',''],notResponded:['no response','']};
+const SA={busy:'busy',free:'free',oof:'out of office',tentative:'tentative',workingElsewhere:'working elsewhere'};
+const person=p=>'<li>'+esc(p.name||p.address)+(p.name&&p.address?' <span class="a">'+esc(p.address)+'</span>':'')+(p.type==='optional'?' <span class="r">(optional)</span>':'')+(p.response&&RS[p.response]?' <span class="r '+RS[p.response][1]+'">· '+RS[p.response][0]+'</span>':'')+'</li>';
+function when(x){const d=x.s,e=x.e;if(x.allDay){const l=addD(e,-1);return DN[d.getDay()]+' '+d.getDate()+' '+MN[d.getMonth()]+(same(day0(l),day0(d))?'':' – '+DN[l.getDay()]+' '+l.getDate()+' '+MN[l.getMonth()])+' · all day';}
+  const m=mins(d,e),dur=m>=60?(Math.floor(m/60)+' h'+(m%60?' '+(m%60)+' min':'')):m+' min';
   return DN[d.getDay()]+' '+d.getDate()+' '+MN[d.getMonth()]+' '+d.getFullYear()+' · '+hm(d)+' – '+(same(day0(d),day0(e))?'':DN[e.getDay()]+' '+e.getDate()+' '+MN[e.getMonth()]+' ')+hm(e)+' ('+dur+')';}
 function row(k,v){return v?'<div class="row"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>':''}
 function fill(x){const c=x.kind==='prop'?null:(CAL[x.cal]||{label:x.cal,color:'gray'});
   const dot=x.kind==='prop'?'var(--'+(x.status==='verstuurd'?'sent':x.status==='vervallen'?'gray-fg':'prop')+')':'var(--'+c.color+'-bd)';
-  let calTxt=x.kind==='prop'?('voorstel'+(x.realCal&&CAL[x.realCal]?' → '+esc(CAL[x.realCal].label):'')):esc(c.label)+(x.cal==='sync'?' <span class="r">(kopie uit een andere agenda, zonder details)</span>':'');
-  let h='<button class="x" aria-label="sluiten">×</button>';
-  if(x.kind==='prop')h+='<span class="chip" style="background:'+dot+'">#'+x.nr+' · '+(x.status==='open'?'open voorstel':x.status)+'</span>';
+  let calTxt=x.kind==='prop'?('proposal'+(x.realCal&&CAL[x.realCal]?' → '+esc(CAL[x.realCal].label):'')):esc(c.label)+(x.cal==='sync'?' <span class="r">(copy from another calendar, without details)</span>':'');
+  let h='<button class="x" aria-label="close">×</button>';
+  if(x.kind==='prop')h+='<span class="chip" style="background:'+dot+'">#'+x.nr+' · '+(x.status==='open'?'open proposal':SL[x.status])+'</span>';
   h+='<h3><span class="dot" style="background:'+dot+'"></span><span>'+esc(x.title)+'</span></h3>';
-  h+=row('Wanneer',esc(when(x)))+row('Agenda',calTxt+(x.showAs&&SA[x.showAs]?' · '+SA[x.showAs]:''))+row('Locatie',esc(x.location||''));
-  if(x.organizer&&x.organizer.address)h+=row('Organisator',esc(x.organizer.name||'')+' <span class="r">'+esc(x.organizer.address)+'</span>');
-  if(x.attendees&&x.attendees.length)h+=row('Deelnemers ('+x.attendees.length+')','<ul>'+x.attendees.map(person).join('')+'</ul>');
-  else if(x.kind!=='prop'&&x.cal!=='sync')h+=row('Deelnemers','<span class="r">geen (soloblok)</span>');
-  if(moved(x))h+=row('Verplaatst','van '+esc(when({s:x.os,e:x.oe}))+'<br><button class="reset">terug naar voorstel</button>');
-  if(clash(x))h+=row('Let op','<span style="color:var(--red-fg)">overlapt met een bestaand event</span>');
-  if(x.kind==='prop'){h+=row('Toelichting','<span class="txt">'+esc(x.toelichting||'')+'</span>')+row('Notitie',x.notitie?'<span class="txt" style="color:var(--prop)">'+esc(x.notitie)+'</span>':'');}
-  else h+=row('Beschrijving',x.body?'<span class="txt">'+esc(x.body)+'</span>':'');
+  h+=row('When',esc(when(x)))+row('Calendar',calTxt+(x.showAs&&SA[x.showAs]?' · '+SA[x.showAs]:''))+row('Location',esc(x.location||''));
+  if(x.organizer&&x.organizer.address)h+=row('Organizer',esc(x.organizer.name||'')+' <span class="r">'+esc(x.organizer.address)+'</span>');
+  if(x.attendees&&x.attendees.length)h+=row('Attendees ('+x.attendees.length+')','<ul>'+x.attendees.map(person).join('')+'</ul>');
+  else if(x.kind!=='prop'&&x.cal!=='sync')h+=row('Attendees','<span class="r">none (solo block)</span>');
+  if(moved(x))h+=row('Moved','from '+esc(when({s:x.os,e:x.oe}))+'<br><button class="reset">back to proposal</button>');
+  if(clash(x))h+=row('Warning','<span style="color:var(--red-fg)">overlaps an existing event</span>');
+  if(x.kind==='prop'){h+=row('Details','<span class="txt">'+esc(x.toelichting||'')+'</span>')+row('Note',x.notitie?'<span class="txt" style="color:var(--prop)">'+esc(x.notitie)+'</span>':'');}
+  else h+=row('Description',x.body?'<span class="txt">'+esc(x.body)+'</span>':'');
   if(x.tag)h+=row('Label',esc(x.tag));
   pop.innerHTML=h;pop.querySelector('.x').onclick=close;
   const rb=pop.querySelector('.reset');if(rb)rb.onclick=ev=>{ev.stopPropagation();x.s=x.os;x.e=x.oe;close();save(x);rerender();};}
@@ -308,7 +323,7 @@ document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&pop.classList.con
 addEventListener('resize',()=>{if(selEl&&pop.classList.contains('open'))place(selEl)});
 // --- slepen: voorstellen verplaatsen (ook naar een andere dag in de week) en begin/eind aanpassen
 const SNAP=15,MINDUR=15,tip=document.createElement('div');tip.id='dtip';document.body.appendChild(tip);
-let drag=null,justDragged=false;
+let drag=null,justDragged=false,laterRender=false;const touched={};
 const snap=m=>Math.round(m/SNAP)*SNAP;
 function dayAt(sec,cx){const ds=[...sec.querySelectorAll('.day')];let best=null;ds.forEach(d=>{const r=d.getBoundingClientRect();if(cx>=r.left&&cx<r.right)best=d;});
   if(!best){const r0=ds[0].getBoundingClientRect();best=cx<r0.left?ds[0]:ds[ds.length-1];}return best;}
@@ -320,7 +335,7 @@ wrap.addEventListener('pointerdown',ev=>{if(ev.button>0)return;const el=ev.targe
   ev.preventDefault();});
 addEventListener('pointermove',ev=>{if(!drag||ev.pointerId!==drag.pid)return;const d=drag;
   if(!d.on){if(Math.abs(ev.clientX-d.sx)+Math.abs(ev.clientY-d.sy)<4)return;d.on=true;close();d.el.classList.add('dragging');
-    try{d.el.setPointerCapture(d.pid)}catch(e){}d.el.style.left='1px';d.el.style.width='calc(100% - 3px)';}
+    touched[d.x.nr]=1;try{d.el.setPointerCapture(d.pid)}catch(e){}d.el.style.left='1px';d.el.style.width='calc(100% - 3px)';}
   const sec=d.el.closest('.week');let dayEl=d.dayEl,s=d.s0,e=d.s0+d.dur;
   const lo=H0*60,hi=H1*60;
   if(d.mode==='move'){dayEl=dayAt(sec,ev.clientX);s=snap(minAt(dayEl,ev.clientY)-d.grab);s=Math.max(lo,Math.min(hi-d.dur,s));e=s+d.dur;
@@ -335,27 +350,37 @@ addEventListener('pointermove',ev=>{if(!drag||ev.pointerId!==drag.pid)return;con
   const ns=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),0,s),ne=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),0,e);
   d.el.classList.toggle('clash',all.some(y=>y.kind!=='prop'&&!y.top&&!BGM(y)&&y.s<ne&&y.e>ns));});
 function endDrag(ev){if(!drag||ev.pointerId!==drag.pid)return;const d=drag;drag=null;tip.style.display='none';
-  if(!d.on||!d.cur)return;justDragged=true;setTimeout(()=>{justDragged=false},0);
+  if(!d.on||!d.cur){if(laterRender){laterRender=false;rerender();}return;}laterRender=false;justDragged=true;setTimeout(()=>{justDragged=false},0);
   const dd=new Date(d.cur.dayEl.dataset.day);const x=d.x;
   x.s=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),0,d.cur.s);x.e=new Date(dd.getFullYear(),dd.getMonth(),dd.getDate(),0,d.cur.e);
   save(x);rerender();}
 addEventListener('pointerup',endDrag);addEventListener('pointercancel',endDrag);
 // --- autosave via de bridge (component agenda, key voorstel-<nr>)
-// zoals het snippet: via /p/ is de bridge de eigen origin (welke poort ook), anders de standaardpoort
-const BRIDGE=(location.protocol.indexOf('http')===0&&location.pathname.indexOf('/p/')===0)?location.origin:'http://127.0.0.1:8791',pill=document.getElementById('agsave'),pending={};
+// Route en pagina-identiteit: het blok LA-BRIDGE-KEUZE uit het annotator-snippet, bij het
+// bouwen letterlijk ingeplakt (één bron; werkt ook zonder snippet op de pagina).
+/*LA-BRIDGE-KEUZE*/
+const BRIDGE=laBridgeKeuze().origin,pill=document.getElementById('agsave'),pending={},busy={};
+// slug: die van het paginabestand (bij het bouwen bepaald), zodat de state ook buiten /p/
+// (dev-server, preview-pane) landt waar de sync hem zoekt
+const basis=()=>({page:location.href,pageFile:paginaBestand(),slug:S.slug||slug(),title:document.title});
 function setPill(t,c){if(!pill)return;pill.hidden=false;pill.textContent=t;pill.className='agpill '+(c||'');}
 const post=(path,body)=>fetch(BRIDGE+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
-function save(x){pending[x.nr]={page:location.href,component:'agenda',key:'voorstel-'+x.nr,
-  value:{start:L16(x.s),end:L16(x.e),base:{start:L16(x.os),end:L16(x.oe)},title:x.title}};flush();}
-function flush(){const ks=Object.keys(pending);if(!ks.length)return;
-  ks.forEach(k=>{const b=pending[k];post('/state-save',b).then(r=>{if(!r||!r.ok)throw 0;if(pending[k]===b)delete pending[k];
-    setPill('opgeslagen '+hm(new Date()),'ok');}).catch(()=>setPill('bridge uit · niet opgeslagen','off'));});}
+function save(x){touched[x.nr]=1;pending[x.nr]=Object.assign(basis(),{component:'agenda',key:'voorstel-'+x.nr,
+  value:{start:L16(x.s),end:L16(x.e),base:{start:L16(x.os),end:L16(x.oe)},title:x.title}});flush();}
+// per key één verzoek tegelijk; wat intussen binnenkomt gaat daarna (de laatste stand wint,
+// ook als de bridge traag is)
+function flush(){Object.keys(pending).forEach(k=>{if(busy[k])return;const b=pending[k];busy[k]=1;
+  post('/state-save',b).then(r=>{if(!r||!r.ok)throw 0;if(pending[k]===b)delete pending[k];
+    setPill('saved '+hm(new Date()),'ok');}).catch(()=>setPill('bridge off · not saved','off'))
+  .then(()=>{busy[k]=0;if(pending[k]&&pending[k]!==b)flush();});});}
 setInterval(flush,3000);
-post('/state',{page:location.href}).then(r=>{const comp=(r&&r.state&&r.state.components&&r.state.components.agenda)||{};let n=0;
-  all.forEach(x=>{if(x.kind!=='prop'||x.status!=='open'||x.top)return;const e=comp['voorstel-'+x.nr];if(!e||!e.start||!e.end)return;
+post('/state',basis()).then(r=>{const comp=(r&&r.state&&r.state.components&&r.state.components.agenda)||{};let n=0;
+  all.forEach(x=>{if(x.kind!=='prop'||x.status!=='open'||x.top||touched[x.nr])return; // al door de reviewer verzet: die wint
+    const e=comp['voorstel-'+x.nr];if(!e||!e.start||!e.end)return;
     const b=e.base;if(b&&(b.start.slice(0,16)!==L16(x.os)||b.end.slice(0,16)!==L16(x.oe)))return; // overlay sindsdien gewijzigd: state is oud
     x.s=P(e.start);x.e=P(e.end);n++;});
-  if(n)rerender();setPill('autosave aan','ok');}).catch(()=>setPill('bridge uit','off'));
+  if(n){if(drag)laterRender=true;else rerender();} // midden in een sleep: pas na het neerzetten
+  setPill('autosave on','ok');}).catch(()=>setPill('bridge off','off'));
 window.AgendaPreview={items:()=>all.filter(x=>x.kind==='prop').map(x=>({nr:x.nr,start:L16(x.s),end:L16(x.e),moved:!!moved(x),clash:clash(x)}))};
 })();
 """
@@ -365,9 +390,9 @@ def page(m):
     import html as H
     e = H.escape
     def dt(s):
-        d = P(s); return f"{['ma','di','wo','do','vr','za','zo'][d.weekday()]} {d.day:02d}-{d.month:02d}"
+        d = P(s); return f"{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d.weekday()]} {d.day:02d}-{d.month:02d}"
     rows = "".join(
-        f'<tr class="prow st-{p["status"]}" data-pid="{p["id"]}"><td><span class="pn">#{p["nr"]} {e({"open":"open","verstuurd":"verstuurd","vervallen":"vervallen"}[p["status"]])}</span></td>'
+        f'<tr class="prow st-{p["status"]}" data-pid="{p["id"]}"><td><span class="pn">#{p["nr"]} {e({"open":"open","verstuurd":"sent","vervallen":"dropped"}[p["status"]])}</span></td>'
         f'<td>{dt(p["start"])}<br>{p["start"][11:16]}–{p["end"][11:16]}</td>'
         f'<td><b>{e(p["title"])}</b><div class="sub">{e(p.get("toelichting",""))}</div>'
         + (f'<div class="note">{e(p["notitie"])}</div>' if p.get("notitie") else "")
@@ -375,23 +400,24 @@ def page(m):
         for p in m["proposals"])
     st = {p["status"] for p in m["proposals"]}
     leg = ""
-    if "open" in st: leg += '<span><i style="background:var(--prop)"></i>open voorstel</span>'
-    if "verstuurd" in st: leg += '<span><i style="background:var(--sent)"></i>verstuurd</span>'
-    if "vervallen" in st: leg += '<span><i style="background:var(--gray-fg)"></i>vervallen</span>'
+    if "open" in st: leg += '<span><i style="background:var(--prop)"></i>open proposal</span>'
+    if "verstuurd" in st: leg += '<span><i style="background:var(--sent)"></i>sent</span>'
+    if "vervallen" in st: leg += '<span><i style="background:var(--gray-fg)"></i>dropped</span>'
     if any(x.get("tag") for x in m["events"]): leg += '<span><i style="background:var(--tag)"></i>' + e(", ".join(sorted({x["tag"] for x in m["events"] if x.get("tag")}))) + '</span>'
     leg += "".join(f'<span><i style="background:var(--{c.get("color","gray")}-bd)"></i>{e(c["label"])}</span>' for c in m["calendars"])
-    leg += f'<span class="sub">blokken ≥ {m["bgMinHours"]} u staan als smalle lane links · klik op een event voor details</span>'
+    leg += f'<span class="sub">blocks ≥ {m["bgMinHours"]} h are shown as a narrow lane on the left · click an event for details</span>'
     data = json.dumps(m, ensure_ascii=False).replace("</", "<\\/")
-    return f'''<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(m["title"])}</title><style>{CSS}</style></head><body><main>
+    js = JS.replace("/*LA-BRIDGE-KEUZE*/", bridge_keuze())
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(m["title"])}</title><style>{CSS}</style></head><body><main>
 <div class="top"><h2>{e(m["heading"])}</h2>{f'<span class="sub">{e(m["subheading"])}</span>' if m["subheading"] else ""}</div>
 <div class="legend">{leg}</div>
 {f'<div class="tablewrap"><table>{rows}</table></div>' if rows else ""}
-<div class="nav"><h1 id="wkm"></h1><button id="prev" aria-label="vorige week">‹</button><button id="tdy">Vandaag</button><button id="next" aria-label="volgende week">›</button><span class="range" id="wkr"></span><span class="agpill" id="agsave" hidden></span></div>
+<div class="nav"><h1 id="wkm"></h1><button id="prev" aria-label="previous week">‹</button><button id="tdy">Today</button><button id="next" aria-label="next week">›</button><span class="range" id="wkr"></span><span class="agpill" id="agsave" hidden></span></div>
 <div class="scroll"><div class="wkwrap" id="weeks"></div></div>
 </main>
 <div id="pop" role="dialog" aria-modal="false"></div>
 <script type="application/json" id="agenda-data">{data}</script>
-<script>{JS}</script>
+<script>{js}</script>
 </body></html>'''
 
 
@@ -402,6 +428,7 @@ def main():
     ap.add_argument("--no-snippet", action="store_true", help="zonder annotator-snippet (alleen voor tests)")
     a = ap.parse_args()
     m = build(json.load(open(a.spec)))
+    m["slug"] = slugify(os.path.splitext(os.path.basename(a.out))[0])
     h = page(m)
     if not a.no_snippet:
         snip = open(SNIPPET).read()
