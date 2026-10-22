@@ -294,6 +294,7 @@
   function uitBridge(j) {
     if (!j || !Array.isArray(j.annotations)) return;
     anns = j.annotations.map(function (a) {
+      laBijBridge[a.id] = true;
       return {
         id: a.id, nr: a.nr, type: a.type || "region",
         rect: a.rect || null, comment: a.comment || "", target: a.target || "",
@@ -1142,7 +1143,12 @@
   })();
 
   /* ---- popup + tekst-referenties --------------------------------- */
-  var popup = null, hangendeGhost = null, refPickMode = false, refPickInsert = null;
+  var popup = null, popupAnn = null, hangendeGhost = null, refPickMode = false, refPickInsert = null;
+  /* Een snapshot hoort bij een popup die nog niet is opgeslagen: gaat die dicht of wordt
+     hij vervangen zonder Save, dan mag de snapshot weg (anders blijft hij in het geheugen). */
+  function vergeetOngebruikteSnap(a) {
+    if (a && !anns.some(function (x) { return x.id === a.id; })) delete laSnaps[a.id];
+  }
   var refInsertRange = null, refSelListener = null;
   function ruimGhostOp() { if (hangendeGhost) { hangendeGhost.remove(); hangendeGhost = null; } }
   function sluitPopup() {
@@ -1152,6 +1158,7 @@
       refSelListener = null;
     }
     if (popup) { popup.remove(); popup = null; }
+    vergeetOngebruikteSnap(popupAnn); popupAnn = null;
     ruimGhostOp();
   }
   function laRefLabel(t) {
@@ -1300,6 +1307,8 @@
   function openPopup(a) {
     /* alleen de popup sluiten, niet de zojuist vastgezette selectie opruimen */
     if (popup) { popup.remove(); popup = null; }
+    if (popupAnn && popupAnn.id !== a.id) vergeetOngebruikteSnap(popupAnn);
+    popupAnn = a;
     popup = document.createElement("div"); popup.id = "la-popup";
     /* annotaties zonder bruikbaar anker openen gewoon in beeld */
     var pr = (a.rect && (a.rect.w || a.rect.h)) ? a.rect
@@ -1471,7 +1480,14 @@
      mee met /save. */
   var LA_UI_SEL = "#la-bar,#la-popup,#la-wees,#la-sesmeld,#la-selknop,#la-overlay," +
     ".la-rect,.la-badge,.la-ghost,.la-sug-rect";
+  /* Zelfde grens als SNAP_MAX in de bridge: een grotere snapshot wordt daar toch geweigerd,
+     dus hij gaat niet mee. Canvassen boven LA_CANVAS_MAX pixels blijven leeg in de crop. */
+  var LA_SNAP_MAX = 40 * 1024 * 1024;
+  var LA_CANVAS_MAX = 4096 * 4096;
   function laSnapshot() {
+    /* Alleen een /p/-pagina van de bridge: van een andere origin (file://) rendert de
+       bridge geen snapshot, dan heeft maken en meesturen geen zin. */
+    if (BRIDGE !== location.origin) return null;
     try {
       var de = document.documentElement, kloon = de.cloneNode(true);
       var orig = de.getElementsByTagName("*"), kopie = kloon.getElementsByTagName("*");
@@ -1494,7 +1510,7 @@
         } else if (tag === "OPTION") {
           if (o.selected) k.setAttribute("selected", ""); else k.removeAttribute("selected");
         } else if (tag === "CANVAS") {
-          canvassen.push([o, k]);
+          if (o.width * o.height <= LA_CANVAS_MAX) canvassen.push([o, k]);
         } else if (tag === "STYLE" && o.sheet && !(o.textContent || "").trim()) {
           /* CSS-in-JS (insertRule) staat niet in de tekst van de style-tag */
           try {
@@ -1541,9 +1557,15 @@
         doctype = "<!DOCTYPE " + dt.name + (dt.publicId ? ' PUBLIC "' + dt.publicId + '"' : "") +
           (!dt.publicId && dt.systemId ? " SYSTEM" : "") + (dt.systemId ? ' "' + dt.systemId + '"' : "") + ">";
       }
+      var html = doctype + kloon.outerHTML;
+      if (html.length > LA_SNAP_MAX) return null;
+      /* Viewport = het venster zonder scrollbalk. Niet documentElement.clientHeight: in
+         quirks mode is dat de hoogte van het hele document. */
+      var vv = window.visualViewport;
       return {
-        html: doctype + kloon.outerHTML,
-        vw: de.clientWidth, vh: de.clientHeight,
+        html: html,
+        vw: vv ? Math.round(vv.width * vv.scale) : innerWidth,
+        vh: vv ? Math.round(vv.height * vv.scale) : innerHeight,
         sx: Math.round(scrollX), sy: Math.round(scrollY),
         dpr: window.devicePixelRatio || 1
       };
@@ -1583,6 +1605,8 @@
       zetStatus(true, j.count + " saved", j.jsonPath);
       return j;
     }).catch(function (e) {
+      /* opslaan mislukt: de snapshot gaat niet meer mee (geheugen vrijgeven) */
+      delete laSnaps[a.id];
       brug.ok = false;
       zetStatus(false, "bridge off - localStorage only",
         "Start the bridge: python -m html_annotator ensure");
@@ -2943,6 +2967,8 @@
       laRangeVanLocator: laRangeVanLocator,
       laRectsVanRange: laRectsVanRange,
       bridgeOrigin: BRIDGE,
+      /* case-23: welke snapshots er nog in het geheugen staan */
+      snapIds: function () { return Object.keys(laSnaps); },
     },
     drafts: function () {
       return Array.prototype.map.call(document.querySelectorAll(".la-draft-txt"), function (b) {

@@ -21,10 +21,12 @@ Check:  python -m html_annotator status
 
 import base64
 import hashlib
+import html as htmllib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,7 @@ import time
 import urllib.parse
 import socket
 import socketserver
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -84,60 +87,123 @@ def vind_chrome():
 CHROME = vind_chrome()
 
 
-def chrome_vlaggen():
+def chrome_vlaggen(file_toegang=False):
     """Headless flags for a screenshot run. Running as root (typical on a server or in a
-    container) Chrome refuses to start its sandbox; --no-sandbox is the documented way out."""
+    container) Chrome refuses to start its sandbox; --no-sandbox is the documented way out.
+
+    --allow-file-access-from-files alleen voor de file-crop (het eigen paginabestand),
+    nooit voor een live snapshot (B44, docs/DECISIONS.md 2026-10-21)."""
     vlaggen = ["--headless=new", "--disable-gpu", "--hide-scrollbars",
-               "--no-first-run", "--no-default-browser-check",
-               "--allow-file-access-from-files", "--disable-dev-shm-usage",
+               "--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage",
                # never touch the user's keychain ("Chrome Safe Storage" prompts on macOS)
                "--use-mock-keychain", "--password-store=basic"]
+    if file_toegang:
+        vlaggen.append("--allow-file-access-from-files")
     draait_als_root = os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0
     if draait_als_root or config.chrome_no_sandbox():
         vlaggen.append("--no-sandbox")
     return vlaggen
 
 
-def run_chrome(args, timeout=90):
+def bestand_url(pad):
+    """file://-URL van een lokaal pad; klopt ook op Windows (drive-letter, backslashes)."""
+    return Path(pad).resolve().as_uri()
+
+
+def png_compleet(pad):
+    """True als het bestand een PNG is die tot en met het IEND-blok geschreven is."""
+    try:
+        with open(pad, "rb") as f:
+            kop = f.read(8)
+            f.seek(-12, os.SEEK_END)
+            staart = f.read(12)
+    except (OSError, ValueError):
+        return False
+    return kop == b"\x89PNG\r\n\x1a\n" and staart[4:8] == b"IEND"
+
+
+CHROME_NALOOP = 2.0   # seconden die Chrome na een complete PNG krijgt om zelf te stoppen
+
+
+def _stop_boom(proc):
+    """Stopt Chrome met al zijn kindprocessen (eigen procesgroep / taskkill /T) en wacht
+    tot ze weg zijn, zodat het profiel daarna veilig weg kan."""
+    if os.name == "nt":
+        if proc.poll() is None:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            proc.wait(5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            break                       # groep is al leeg
+        eind = time.time() + 3
+        while time.time() < eind:
+            proc.poll()
+            try:
+                os.killpg(proc.pid, 0)
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            continue                    # leeft nog: harder
+        break
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait()
+
+
+def run_chrome(args, timeout=90, chrome=None, file_toegang=False):
     """Run headless Chrome for one --screenshot, with the stderr tail in the error.
 
     Own throwaway profile and a mock keychain: Chrome never touches the user's profile or
     keychain ("Chrome Safe Storage" prompts on macOS). With an explicit --user-data-dir,
-    Chrome writes the screenshot but does not always exit, so once the file is there and
-    stable the process is ended."""
+    Chrome writes the screenshot but does not always exit. Daarom: wachten tot de PNG
+    compleet en stabiel is, Chrome dan CHROME_NALOOP seconden geven, en anders de hele
+    procesboom stoppen. Pas daarna gaat het profiel weg, en alleen een complete PNG telt."""
+    chrome = chrome or CHROME
     shot = next((a.split("=", 1)[1] for a in args if a.startswith("--screenshot=")), None)
     if shot and os.path.exists(shot):
         os.remove(shot)
     profiel = tempfile.mkdtemp(prefix="html-annotator-chrome-")
     log = tempfile.TemporaryFile()
-    proc = subprocess.Popen([CHROME] + chrome_vlaggen() + ["--user-data-dir=" + profiel] + args,
-                            stdout=subprocess.DEVNULL, stderr=log)
+    eigen_groep = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                   else {"start_new_session": True})
+    proc = subprocess.Popen([chrome] + chrome_vlaggen(file_toegang)
+                            + ["--user-data-dir=" + profiel] + args,
+                            stdout=subprocess.DEVNULL, stderr=log, **eigen_groep)
     try:
         eind, vorige = time.time() + timeout, -1
         while time.time() < eind:
             if proc.poll() is not None:
                 break
             grootte = os.path.getsize(shot) if shot and os.path.exists(shot) else -1
-            if grootte > 0 and grootte == vorige:
+            if grootte > 0 and grootte == vorige and png_compleet(shot):
+                try:
+                    proc.wait(min(CHROME_NALOOP, max(0.1, eind - time.time())))
+                except subprocess.TimeoutExpired:
+                    pass
                 break
             vorige = grootte
             time.sleep(0.3)
         else:
             raise RuntimeError("chrome timeout after %ds" % timeout)
-        if proc.poll() is not None and proc.returncode != 0 and not (shot and os.path.exists(shot)):
+        if proc.poll() is not None and proc.returncode != 0 and not (shot and png_compleet(shot)):
             log.seek(0)
             staart = log.read().decode("utf-8", "replace").strip().splitlines()[-3:]
             raise RuntimeError("chrome exit %d: %s" % (proc.returncode, " | ".join(staart)[:400]))
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+        _stop_boom(proc)
         log.close()
         shutil.rmtree(profiel, ignore_errors=True)
+    if shot and not png_compleet(shot):
+        raise RuntimeError("chrome schreef geen complete PNG")
 
 
 CACHE = os.path.join(tempfile.gettempdir(), "html-annotator-shots")
@@ -158,14 +224,14 @@ def slugify(tekst, standaard="pagina"):
     return s[:60] or standaard
 
 
-def _is_eigen_p_url(page):
+def _is_eigen_p_url(page, port=None):
     """True voor http(s)://<loopback>:<deze poort>/p/..."""
     try:
         u = urllib.parse.urlparse(page or "")
         if u.scheme not in ("http", "https") or not u.path.startswith("/p/"):
             return False
         poort = u.port or (443 if u.scheme == "https" else 80)
-        return config.is_loopback(u.hostname or "") and poort == PORT
+        return config.is_loopback(u.hostname or "") and poort == (port or PORT)
     except ValueError:
         return False
 
@@ -314,13 +380,11 @@ def volledige_shot(bestand, page_url, dw, dh):
                           os.path.getmtime(bestand) if bestand else "")
          ).encode()).hexdigest()[:24]
     uit = os.path.join(CACHE, sleutel + ".png")
-    if os.path.isfile(uit):
+    if png_compleet(uit):
         return uit
-    url = page_url
-    if bestand:
-        url = "file://" + urllib.parse.quote(bestand)
+    url = bestand_url(bestand) if bestand else page_url
     eis_chrome()
-    run_chrome(["--screenshot=" + uit, "--window-size=%d,%d" % (dw, dh), url])
+    run_chrome(["--screenshot=" + uit, "--window-size=%d,%d" % (dw, dh), url], file_toegang=True)
     return uit
 
 
@@ -328,7 +392,7 @@ def crop_via_chrome(bestand, page_url, dw, dh, box, uit):
     """Fallback zonder Pillow: iframe-clip renderen met headless Chrome."""
     eis_chrome()
     x0, y0, x1, y1 = box
-    url = "file://" + urllib.parse.quote(bestand) if bestand else page_url
+    url = bestand_url(bestand) if bestand else page_url
     html = (
         "<!doctype html><meta charset=utf-8>"
         "<style>html,body{margin:0;padding:0;overflow:hidden;background:#fff}"
@@ -342,7 +406,7 @@ def crop_via_chrome(bestand, page_url, dw, dh, box, uit):
     try:
         run_chrome(["--screenshot=" + uit,
                     "--window-size=%d,%d" % (max(1, x1 - x0), max(1, y1 - y0)),
-                    "file://" + urllib.parse.quote(wrapper)])
+                    bestand_url(wrapper)], file_toegang=True)
     finally:
         try:
             os.remove(wrapper)
@@ -355,14 +419,19 @@ def crop_via_chrome(bestand, page_url, dw, dh, box, uit):
 # van de DOM zoals de reviewer hem zag (uitgeklapte details, scrollposities, ingevulde
 # velden, door JS gezette staat; scripts en on*-handlers eruit) plus viewport, scroll en
 # devicePixelRatio. De bridge rendert die snapshot in plaats van het paginabestand vers te
-# laden. Zie docs/DECISIONS.md (2026-10-09) en CRITERIA.md B44.
-SNAPS = {}                        # token -> (html-bytes, nonce); alleen tijdens het renderen
+# laden. Zie docs/DECISIONS.md (2026-10-09, 2026-10-21) en CRITERIA.md B44.
+#
+# De snapshot is invoer van de client en wordt zo behandeld (2026-10-21): de bridge
+# saniteert hem zelf (schoon_snapshot), serveert hem alleen via /snap/<token> met een
+# CSP-header (nooit als file://-document, nooit met bestandstoegang), en rendert hem
+# alleen voor een /save van de eigen origin (h_save, live_toegestaan).
+SNAPS = {}                        # token -> (html-bytes, csp); alleen tijdens het renderen
 SNAP_MAX = 40 * 1024 * 1024       # tekens; een 3,5 MB-pagina zonder scripts past ruim
 SNAP_CSS = ("html,body{scroll-behavior:auto!important}"
             "*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;"
             "transition:none!important;caret-color:transparent!important}")
 # Zet de scrollposities terug: eerst de containers (data-la-snap-scroll), dan het venster.
-# Is het document te kort om tot Y te scrollen (venster hoger gemaakt), dan een spacer.
+# Is het document te kort om tot Y te scrollen, dan een spacer.
 SNAP_JS = (
     "(function(){var X=%d,Y=%d;function zet(){"
     "var l=document.querySelectorAll('[data-la-snap-scroll]');"
@@ -376,6 +445,138 @@ SNAP_JS = (
     "zet();addEventListener('load',zet);requestAnimationFrame(zet);"
     "if(document.fonts&&document.fonts.ready)document.fonts.ready.then(zet);})();")
 
+# Elementen die met inhoud en al uit de snapshot gaan; de lege (void) varianten hebben
+# geen eindtag en dus niets om over te slaan.
+SNAP_WEG = {"script", "noscript", "iframe", "frame", "frameset", "object", "embed",
+            "applet", "portal", "base"}
+SNAP_WEG_LEEG = {"embed", "frame", "base"}
+SNAP_ATTR_NAAM = re.compile(r"^[^\s\"'<>/=]+$")
+SNAP_SCRIPT_URL = re.compile(r"^(javascript|vbscript):", re.I)
+
+
+class _SnapSchoner(HTMLParser):
+    """Bouwt de snapshot opnieuw op uit tokens: alleen wat hier wordt uitgeschreven komt
+    erin. Tekst en attribuutwaarden worden opnieuw ge-escaped, dus een '<' in een waarde
+    kan nooit een tag worden."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.uit = []
+        self.overslaan = None       # [tag, diepte] zolang een weg-element loopt
+        self.in_style = False
+
+    def _attrs(self, tag, attrs):
+        wachtwoord = tag == "input" and any(
+            k == "type" and (v or "").strip().lower() == "password" for k, v in attrs)
+        delen = []
+        for k, v in attrs:
+            if not SNAP_ATTR_NAAM.match(k) or k.startswith("on") or k == "srcdoc":
+                continue
+            if v is not None and SNAP_SCRIPT_URL.match(re.sub(r"[\x00-\x20]+", "", v)):
+                continue
+            if wachtwoord and k == "value":
+                v = "x" * len(v or "")
+            delen.append(k if v is None else '%s="%s"' % (k, htmllib.escape(v, quote=True)))
+        return "".join(" " + d for d in delen)
+
+    def _weg(self, tag, attrs):
+        return tag in SNAP_WEG or (tag == "meta" and any(k == "http-equiv" for k, _ in attrs))
+
+    def handle_starttag(self, tag, attrs):
+        if self.overslaan:
+            if tag == self.overslaan[0]:
+                self.overslaan[1] += 1
+            return
+        if self._weg(tag, attrs):
+            if tag in SNAP_WEG and tag not in SNAP_WEG_LEEG:
+                self.overslaan = [tag, 1]
+            return
+        self.uit.append("<%s%s>" % (tag, self._attrs(tag, attrs)))
+        self.in_style = tag == "style"
+
+    def handle_startendtag(self, tag, attrs):
+        if not self.overslaan and not self._weg(tag, attrs):
+            self.uit.append("<%s%s/>" % (tag, self._attrs(tag, attrs)))
+
+    def handle_endtag(self, tag):
+        if self.overslaan:
+            if tag == self.overslaan[0]:
+                self.overslaan[1] -= 1
+                if not self.overslaan[1]:
+                    self.overslaan = None
+            return
+        if tag in SNAP_WEG:
+            return
+        self.in_style = False
+        self.uit.append("</%s>" % tag)
+
+    def handle_data(self, data):
+        if self.overslaan:
+            return
+        if self.in_style:
+            # CSS kent '<' niet buiten strings; als CSS-escape blijft een string gelijk en
+            # kan niets uit de stylesheet breken (ook niet in svg/math).
+            self.uit.append(data.replace("<", "\\3c "))
+        else:
+            self.uit.append(htmllib.escape(data, quote=False))
+
+    def handle_decl(self, decl):
+        if not self.overslaan and decl.lower().startswith("doctype"):
+            self.uit.append("<!%s>" % decl)
+
+    # opmerkingen, processing instructions en CDATA-blokken gaan eruit
+    def handle_comment(self, data):
+        pass
+
+    def handle_pi(self, data):
+        pass
+
+    def unknown_decl(self, data):
+        pass
+
+
+def schoon_snapshot(html):
+    """Sanitiser voor een snapshot van de client: scripts, noscript, iframe/frame/object/
+    embed/applet/portal, <base>, <meta http-equiv>, opmerkingen, on*-attributen, srcdoc en
+    javascript:/vbscript:-URL's eruit; wachtwoordvelden gemaskeerd. De rest blijft."""
+    p = _SnapSchoner()
+    p.feed(html)
+    p.close()
+    return "".join(p.uit)
+
+
+def eigen_origins(port=None):
+    """De origins van de /p/-pagina's van deze bridge."""
+    port = port or PORT
+    return {"http://%s:%d" % (HOST, port), "http://localhost:%d" % port}
+
+
+def bereid_snapshot(html, x, y, base=None, port=None):
+    """Snapshot klaar om via /snap/<token> te serveren: gesaniteerd, met een eigen <base>
+    (alleen een /p/-URL van deze bridge), en vóór de laatste </body> de neutraliserende CSS
+    en het herstel-script met een verse nonce. Geeft (body-bytes, CSP-header); de CSP staat
+    alleen dat ene script toe en geen netwerk vanuit script."""
+    nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:24]
+    html = schoon_snapshot(html)
+    if base:
+        tag = '<base href="%s">' % htmllib.escape(base, quote=True)
+        m = (re.search(r"<head\b[^>]*>", html, re.I)
+             or re.match(r"\s*<!doctype[^>]*>", html, re.I))   # nooit vóór het doctype
+        html = html[:m.end()] + tag + html[m.end():] if m else tag + html
+    extra = ('<style>%s</style><script nonce="%s">%s</script>'
+             % (SNAP_CSS, nonce, SNAP_JS % (x, y)))
+    # Op het origineel zoeken, niet op html.lower(): lower() verandert de lengte (U+0130).
+    eind = None
+    for eind in re.finditer(r"</body\s*>", html, re.I):
+        pass
+    html = html[:eind.start()] + extra + html[eind.start():] if eind else html + extra
+    eigen = " ".join(sorted(eigen_origins(port)))
+    csp = ("default-src 'none'; script-src 'nonce-%s'; style-src %s 'unsafe-inline' https: data:; "
+           "img-src %s https: data:; font-src %s https: data:; media-src %s https: data:; "
+           "connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; "
+           "base-uri %s" % (nonce, eigen, eigen, eigen, eigen, eigen))
+    return html.encode("utf-8"), csp
+
 
 def _getal(waarde, standaard, lo, hi, soort=int):
     try:
@@ -385,43 +586,33 @@ def _getal(waarde, standaard, lo, hi, soort=int):
     return max(lo, min(hi, v))
 
 
-def snapshot_html(snap, nonce, x, y, met_meta_csp):
-    """Snapshot klaar om te renderen: herstel-script (met nonce) en neutraliserende CSS
-    vóór de laatste </body>; bij file:// ook de CSP als meta (er is dan geen header)."""
-    html = snap["html"]
-    extra = ('<style>%s</style><script nonce="%s">%s</script>'
-             % (SNAP_CSS, nonce, SNAP_JS % (x, y)))
-    i = html.lower().rfind("</body>")
-    html = html[:i] + extra + html[i:] if i >= 0 else html + extra
-    if met_meta_csp:
-        meta = ('<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" '
-                'content="%s">' % snap_csp(nonce))
-        m = (re.search(r"<head\b[^>]*>", html, re.I)
-             or re.match(r"\s*<!doctype[^>]*>", html, re.I))   # nooit vóór het doctype
-        html = html[:m.end()] + meta + html[m.end():] if m else meta + html
-    return html
+def maak_crop_live(snap, page_url, rect, uit_pad, chrome=None, pillow=None, snaps=None,
+                   host=None, port=None):
+    """Crop uit de live snapshot: zelfde DOM-staat, viewport, scroll en DPR als de reviewer.
 
-
-def snap_csp(nonce):
-    """Alleen het eigen herstel-script mag draaien; geen netwerk vanuit script."""
-    return ("script-src 'nonce-%s'; connect-src 'none'; object-src 'none'; form-action 'none'"
-            % nonce)
-
-
-def maak_crop_live(snap, page_url, rect, uit_pad):
-    """Crop uit de live snapshot: zelfde DOM-staat, viewport, scroll en DPR als de reviewer."""
+    Chrome, Pillow, de snapshot-opslag en het adres van de bridge zijn parameters (standaard
+    die van deze module), zodat een test ze via de interface meegeeft."""
+    chrome = chrome or CHROME
+    pillow = HEEFT_PILLOW if pillow is None else pillow
+    snaps = SNAPS if snaps is None else snaps
+    host, port = host or HOST, port or PORT
     html = snap.get("html")
     if not isinstance(html, str) or not html.strip():
         raise ValueError("lege snapshot")
     if len(html) > SNAP_MAX:
         raise ValueError("snapshot te groot (%d tekens)" % len(html))
-    eis_chrome()
+    eis_chrome(chrome)
     vw = _getal(snap.get("vw"), 1280, 100, 8000)
     vh = _getal(snap.get("vh"), 800, 100, 8000)
     sx = _getal(snap.get("sx"), 0, 0, 10 ** 7)
     sy = _getal(snap.get("sy"), 0, 0, 10 ** 7)
     dpr = _getal(snap.get("dpr"), 1.0, 1.0, 2.0, float)
     rx, ry, rw, rh = int(rect["x"]), int(rect["y"]), int(rect["w"]), int(rect["h"])
+    # Gerenderd wordt altijd op de viewport van de reviewer: een groter venster verandert
+    # 100vh, media queries en fixed elementen. Past de selectie daar niet in, dan is er geen
+    # eerlijke live crop: terugvallen op het bestand (kies_crop, liveCropError).
+    if rw > vw or rh > vh:
+        raise ValueError("selectie groter dan de viewport (%dx%d > %dx%d)" % (rw, rh, vw, vh))
     x0, y0 = max(0, rx - MARGE), max(0, ry - MARGE)
     x1, y1 = rx + rw + MARGE, ry + rh + MARGE
     # De marge loopt niet voorbij de rand van wat de reviewer zag: ligt de selectie zelf
@@ -434,33 +625,27 @@ def maak_crop_live(snap, page_url, rect, uit_pad):
         x1 = min(x1, sx + vw)
     if ry + rh <= sy + vh:
         y1 = min(y1, sy + vh)
-    # Venster zoals de reviewer het zag. Viel de selectie er (deels) buiten, dan scrollt
-    # het mee; verticaal mag het venster groeien, horizontaal niet (dat herschikt de layout).
-    sx = min(sx, x0)
-    sy = min(sy, y0)
-    x1 = min(x1, sx + vw)
-    hoogte = min(max(vh, y1 - sy), 16000)
-    y1 = min(y1, sy + hoogte)
+    if x1 - x0 > vw:
+        x0, x1 = rx, rx + rw
+    if y1 - y0 > vh:
+        y0, y1 = ry, ry + rh
+    # Scrollen in plaats van groeien: zo dicht mogelijk bij de scroll van de reviewer, maar
+    # met de hele crop in beeld.
+    sx = min(max(sx, x1 - vw), x0)
+    sy = min(max(sy, y1 - vh), y0)
     if x1 <= x0 or y1 <= y0:
         raise ValueError("lege crop")
     box = (x0 - sx, y0 - sy, x1 - sx, y1 - sy)
 
-    nonce = hashlib.sha256(os.urandom(16)).hexdigest()[:24]
+    base = page_url if _is_eigen_p_url(page_url, port) else None
     werk = tempfile.mkdtemp(prefix="html-annotator-snap-")
-    token = None
+    token = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
     try:
-        if (page_url or "").startswith("file:") or not (page_url or "").startswith("http"):
-            # file://-pagina: de snapshot naast zijn assets kan niet via http (Chrome laadt
-            # geen file://-assets in een http-document), dus als tijdelijk bestand.
-            bron = os.path.join(werk, "snapshot.html")
-            with open(bron, "w", encoding="utf-8") as f:
-                f.write(snapshot_html(snap, nonce, sx, sy, True))
-            url = "file://" + urllib.parse.quote(bron)
-        else:
-            # Via de bridge zelf, same-origin met /p/: CSS, fonts en afbeeldingen laden.
-            token = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
-            SNAPS[token] = (snapshot_html(snap, nonce, sx, sy, False).encode("utf-8"), nonce)
-            url = "http://%s:%d/snap/%s" % (HOST, PORT, token)
+        # Altijd via de bridge (/snap/<token>), same-origin met /p/: CSS, fonts en
+        # afbeeldingen laden, de CSP-header geldt voor het hele document, en er is geen
+        # file://-document en geen bestandstoegang.
+        snaps[token] = bereid_snapshot(html, sx, sy, base=base, port=port)
+        url = "http://%s:%d/snap/%s" % (host, port, token)
         os.makedirs(os.path.dirname(uit_pad), exist_ok=True)
         # Altijd via een iframe ter grootte van de viewport van de reviewer. Chromes
         # --screenshot legt het document vanaf (0,0) vast en schildert wat buiten beeld
@@ -468,34 +653,32 @@ def maak_crop_live(snap, page_url, rect, uit_pad):
         # In een iframe scrolt de snapshot binnen zijn eigen viewport, en die staat in beeld.
         # Met Pillow: hele viewport renderen en knippen; zonder: iframe verschuiven zodat
         # het venster precies de crop is.
-        met_pillow = HEEFT_PILLOW
-        links, boven = (0, 0) if met_pillow else (-box[0], -box[1])
+        links, boven = (0, 0) if pillow else (-box[0], -box[1])
         wrapper = os.path.join(werk, "clip.html")
         with open(wrapper, "w", encoding="utf-8") as f:
             f.write("<!doctype html><meta charset=utf-8>"
                     "<style>html,body{margin:0;padding:0;overflow:hidden;background:#fff}"
                     "iframe{position:absolute;border:0;left:%dpx;top:%dpx;width:%dpx;height:%dpx}"
                     "</style><iframe src=\"%s\" scrolling=no></iframe>"
-                    % (links, boven, vw, hoogte, url))
-        venster = (vw, hoogte) if met_pillow else (box[2] - box[0], box[3] - box[1])
-        shot = os.path.join(werk, "shot.png") if met_pillow else uit_pad
+                    % (links, boven, vw, vh, url))
+        venster = (vw, vh) if pillow else (box[2] - box[0], box[3] - box[1])
+        shot = os.path.join(werk, "shot.png") if pillow else uit_pad
         run_chrome(["--force-device-scale-factor=%g" % dpr, "--screenshot=" + shot,
-                    "--window-size=%d,%d" % venster, "file://" + urllib.parse.quote(wrapper)])
-        if met_pillow:
+                    "--window-size=%d,%d" % venster, bestand_url(wrapper)], chrome=chrome)
+        if pillow:
             with Image.open(shot) as img:
                 k = [int(round(v * dpr)) for v in box]
                 img.crop((k[0], k[1], min(k[2], img.width), min(k[3], img.height))).save(uit_pad)
     finally:
-        if token:
-            SNAPS.pop(token, None)
+        snaps.pop(token, None)
         shutil.rmtree(werk, ignore_errors=True)
     return uit_pad
 
 
-def eis_chrome():
+def eis_chrome(chrome=None):
     """Geen Chrome/Edge: crop overslaan. h_save vangt dit en bewaart de annotatie
     zonder afbeelding (imageError), zodat opslaan nooit van een browser afhangt."""
-    if not CHROME:
+    if not (chrome or CHROME):
         print("no Chrome/Edge found: crop skipped, annotation still stored "
               "(set HTML_ANNOTATOR_CHROME to point at a browser)", flush=True)
         raise RuntimeError("no Chrome/Edge found (HTML_ANNOTATOR_CHROME)")
@@ -645,8 +828,75 @@ def h_resolve(payload):
     return uit
 
 
-def h_save(payload):
+def kies_crop(snap, live_toegestaan, page_url, bestand, doc, rect, bestaande, h, uit_pad):
+    """Kiest en maakt de crop van een regio-annotatie. Een nieuwe crop komt in uit_pad
+    (tijdelijk pad; h_save zet hem pas op zijn plek als alles gelukt is).
+
+    Geeft (image, cropSource, fouten): image is uit_pad bij een nieuwe crop, het pad van de
+    bestaande crop als die blijft staan, of None; fouten bevat liveCropError/imageError en
+    contentHash als de oude paginaversie bij de behouden crop hoort.
+
+    1. Snapshot meegestuurd van de eigen origin: live crop van het selectiemoment.
+    2. Bestaande crop blijft staan als die bij een oudere paginaversie hoort, als hij live
+       was (een comment bewerken stuurt geen snapshot), of als een nieuwe crop mislukt.
+    3. Anders het paginabestand vers laden (cropSource "file")."""
+    fouten = {}
+    heeft_oud = bool(bestaande and bestaande.get("image"))
+    if isinstance(snap, dict) and snap.get("html"):
+        if not live_toegestaan:
+            fouten["liveCropError"] = "snapshot niet gerenderd: origin is niet deze bridge"
+        else:
+            try:
+                maak_crop_live(snap, page_url, rect, uit_pad)
+                return uit_pad, "live", fouten
+            except Exception as e:  # live crop mislukt: bestaande crop of het paginabestand
+                fouten["liveCropError"] = str(e)[:200]
+    hergebruik = (heeft_oud and bestaande.get("_rect") == rect
+                  and bestaande.get("contentHash") and bestaande["contentHash"] != h)
+    live_blijft = heeft_oud and bestaande.get("cropSource") == "live"
+    if hergebruik or live_blijft or (heeft_oud and "liveCropError" in fouten):
+        if hergebruik:
+            fouten["contentHash"] = bestaande["contentHash"]
+        return bestaande["image"], bestaande.get("cropSource") or "file", fouten
+    # Geen snapshot (oude snippet, andere origin, live mislukt): het paginabestand vers
+    # laden. Interactieve staat zit daar niet in; cropSource zegt dat.
+    try:
+        maak_crop(bestand, page_url, doc, rect, uit_pad)
+        return uit_pad, "file", fouten
+    except Exception as e:  # crop mislukt: annotatie toch bewaren
+        if heeft_oud:
+            return bestaande["image"], bestaande.get("cropSource") or "file", fouten
+        fouten["imageError"] = str(e)[:200]
+        return None, None, fouten
+
+
+def h_save(payload, live_toegestaan=False):
+    """Annotatie opslaan. De crop (headless Chrome, seconden) draait buiten LOCK; alleen
+    het lezen en het schrijven van de JSON gebeuren eronder, zodat /session en /delete niet
+    op een crop wachten. live_toegestaan: de /save komt van de eigen origin (do_POST)."""
     ann = dict(payload.get("annotation") or {})
+    soort = ann.get("type") or ("text" if ann.get("selectedText") else "region")
+    crop, tijdelijk = None, None
+    if soort == "region":
+        with LOCK:
+            # alleen lezen: een lege rondemap zonder JSON zou een volgende ronde openen
+            _nr, _ronde_map, _json_pad, data, bestand, h = bepaal_ronde(payload)
+            bestaande = next((a for a in data.get("annotations", [])
+                              if a.get("id") == ann.get("id")), None)
+            doc = payload.get("doc") or data.get("doc") or {}
+        os.makedirs(CACHE, exist_ok=True)
+        tijdelijk = os.path.join(CACHE, "crop-%s.png" % hashlib.sha256(os.urandom(8)).hexdigest()[:16])
+        crop = kies_crop(payload.get("snapshot"), live_toegestaan, payload.get("page"), bestand,
+                         doc, ann.get("rect") or {}, bestaande, h, tijdelijk)
+    try:
+        with LOCK:
+            return _bewaar(payload, ann, soort, crop, tijdelijk)
+    finally:
+        if tijdelijk and os.path.exists(tijdelijk):
+            os.remove(tijdelijk)
+
+
+def _bewaar(payload, ann, soort, crop, tijdelijk):
     nr, ronde_map, json_pad, data, bestand, h = bepaal_ronde(payload, maak=True)
     data["lastContentHash"] = h
     data["doc"] = payload.get("doc") or data.get("doc") or {}
@@ -658,7 +908,7 @@ def h_save(payload):
 
     rec = {
         "nr": nummer,
-        "type": ann.get("type") or ("text" if ann.get("selectedText") else "region"),
+        "type": soort,
         "target": (ann.get("target") or "").strip(),
         "comment": (ann.get("comment") or "").strip(),
         "id": ann.get("id"),
@@ -714,46 +964,20 @@ def h_save(payload):
         rect = ann.get("rect") or {}
         rel = "screenshots/annotatie-%02d.png" % nummer
         rec["_rect"] = rect
-        # 1. Live snapshot meegestuurd (nieuwe selectie): crop uit wat de reviewer zag.
-        snap = payload.get("snapshot")
-        live_fout = None
-        if isinstance(snap, dict) and snap.get("html"):
+        beeld, bron, fouten = crop
+        if beeld and beeld == tijdelijk:
+            # pas nu, onder LOCK, de nieuwe crop op zijn plek: de oude bleef tot hier staan
             try:
-                maak_crop_live(snap, payload.get("page"), rect, os.path.join(ronde_map, rel))
-                rec["image"] = rel
-                rec["cropSource"] = "live"
-            except Exception as e:  # live crop mislukt: terugvallen op het paginabestand
-                live_fout = str(e)[:200]
-        # 2. Bewerkt iemand een annotatie die bij een oudere paginaversie hoort, dan zou
-        # opnieuw croppen de goede oude crop overschrijven met het verkeerde gebied.
-        # In dat geval de bestaande crop en hash laten staan. Een live crop hoort bij het
-        # moment van de selectie: zonder nieuwe snapshot (comment bewerkt) blijft hij staan.
-        hergebruik = (bestaande and bestaande.get("image")
-                      and bestaande.get("_rect") == rect
-                      and bestaande.get("contentHash")
-                      and bestaande["contentHash"] != h)
-        live_blijft = (bestaande and bestaande.get("image")
-                       and bestaande.get("cropSource") == "live")
-        if "image" in rec:
-            pass
-        elif (hergebruik or live_blijft) and not live_fout:
-            rec["image"] = bestaande["image"]
-            rec["cropSource"] = bestaande.get("cropSource") or "file"
-            if hergebruik:
-                rec["contentHash"] = bestaande["contentHash"]
-        else:
-            # 3. Geen snapshot (oude snippet, file-fallback): het paginabestand vers laden.
-            # Interactieve staat zit daar niet in; cropSource zegt dat.
-            try:
-                maak_crop(bestand, payload.get("page"), data["doc"], rect,
-                          os.path.join(ronde_map, rel))
-                rec["image"] = rel
-                rec["cropSource"] = "file"
-            except Exception as e:  # crop mislukt: annotatie toch bewaren
-                rec["image"] = None
-                rec["imageError"] = str(e)[:200]
-            if live_fout:
-                rec["liveCropError"] = live_fout
+                shutil.move(tijdelijk, os.path.join(ronde_map, rel))
+                beeld = rel
+            except OSError as e:
+                beeld, fouten = None, dict(fouten, imageError=str(e)[:200])
+        rec["image"] = beeld
+        if bron:
+            rec["cropSource"] = bron
+        for sleutel in ("liveCropError", "imageError", "contentHash"):
+            if sleutel in fouten:
+                rec[sleutel] = fouten[sleutel]
 
     # meegestuurde afbeelding (geplakt/bijgevoegd) als los bestand wegschrijven
     img = ann.get("img")
@@ -1234,12 +1458,12 @@ class Handler(BaseHTTPRequestHandler):
             item = SNAPS.get(pad[len("/snap/"):])
             if not item:
                 return self._json(404, {"ok": False, "error": "onbekende snapshot"}, cors=False)
-            body, nonce = item
+            body, csp = item
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", snap_csp(nonce))
+            self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             self.wfile.write(body)
             return
@@ -1269,9 +1493,9 @@ class Handler(BaseHTTPRequestHandler):
         if not fn:
             return self._json(404, {"ok": False, "error": "onbekend pad"})
         eis = HERKOMST.get(pad)
+        origin = self.headers.get("Origin")
+        eigen = eigen_origins()
         if eis:
-            origin = self.headers.get("Origin")
-            eigen = {"http://%s:%d" % (HOST, PORT), "http://localhost:%d" % PORT}
             if eis == "page" and origin not in eigen:
                 return self._json(403, {"ok": False, "error": "alleen vanuit een /p/-pagina van deze bridge"})
             if eis == "local" and origin is not None:
@@ -1282,8 +1506,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(400, {"ok": False, "error": "ongeldige body: %s" % e})
         try:
-            with LOCK:
-                self._json(200, fn(payload))
+            if fn is h_save:
+                # h_save neemt LOCK zelf, alleen rond de JSON (de crop draait erbuiten). Een
+                # snapshot wordt alleen gerenderd voor een /p/-pagina van deze bridge.
+                self._json(200, h_save(payload, live_toegestaan=origin in eigen))
+            else:
+                with LOCK:
+                    self._json(200, fn(payload))
         except ValueError as e:
             # verkeerde of ontbrekende invoer is een clientfout, geen serverfout
             self._json(400, {"ok": False, "error": str(e)[:300]})

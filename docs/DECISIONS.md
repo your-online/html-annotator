@@ -3,6 +3,56 @@
 Choices a later cleanup must not reopen without the owner.
 Changing behaviour is a new decision, not an edit here.
 
+## 2026-10-21 — A live snapshot is client input: sanitised, served over /snap/ only, own origin only
+
+Trigger: review of the 2026-10-09 live crop. The snapshot HTML came from the
+client and went to Chrome unsanitised; the CSP meta was inserted after the
+first `<head…>` match (so markup in front of it ran outside the policy); a
+`file://` page's snapshot was rendered as a `file://` document with
+`--allow-file-access-from-files`; and `/save` with Origin `null` (any
+sandboxed iframe, any `file://` page) was rendered too.
+
+**Decision, defence in depth.**
+1. The bridge sanitises every snapshot itself (`schoon_snapshot`): it
+   rebuilds the document from parser tokens and drops `script`, `noscript`,
+   `iframe`, `frame(set)`, `object`, `embed`, `applet`, `portal`, `base`,
+   `<meta http-equiv>`, comments, `on*` attributes, `srcdoc` and
+   `javascript:`/`vbscript:` URLs; text and attribute values are re-escaped;
+   `<` inside `<style>` becomes the CSS escape `\3c `; password fields are
+   masked (also done by the snippet).
+2. One function (`bereid_snapshot`) owns sanitiser, nonce and CSP. The CSP
+   goes out as an HTTP header on `/snap/<token>`, so it governs the whole
+   document: `default-src 'none'`, `script-src` only the nonce of the
+   restore script, `connect-src 'none'`, no frames/objects/forms; styles,
+   images, fonts and media from the bridge's own origins, `https:` and
+   `data:`. No meta CSP any more.
+3. A snapshot is never rendered as a `file://` document and Chrome never
+   gets `--allow-file-access-from-files` for it; only the file crop (the
+   page file itself, unchanged behaviour) keeps that flag.
+4. Only a `/save` whose Origin is the bridge's own origin (a `/p/` page,
+   `http://127.0.0.1:<port>` or `http://localhost:<port>`) is live-rendered.
+   Origin `null`, another loopback port, or no Origin (curl, CLI): the
+   snapshot is ignored, the crop comes from the page file and
+   `liveCropError` says why. The snippet does not even take a snapshot off
+   `/p/`. Consequence: a page opened as `file://` gets the file crop again.
+
+Same round: the crop runs outside the global LOCK (only reading and writing
+the JSON are under it), a new crop goes to a temp file and replaces the old
+one only when it succeeded, an existing crop is kept when a new one fails,
+the render viewport is always the reviewer's (a selection outside it is
+reached by scrolling; one larger than the viewport falls back to the file
+crop), and Chrome is waited for, then stopped with its whole process tree
+before the profile is removed; only a complete PNG counts.
+
+**Rejected.**
+- Keeping the `file://` route for `file://` pages with a tighter CSP: the
+  document would still have a `file://` origin, and the flag would still be
+  needed for its assets.
+- Treating requests without Origin as trusted for live rendering: the
+  snippet always sends Origin on a POST, so nothing legitimate needs it.
+- A regex sanitiser: tag soup and parser differentials make it unreliable;
+  rebuilding from tokens only writes out what was checked.
+
 ## 2026-10-09 — The crop comes from a live DOM snapshot, not from the page file
 
 Trigger: a region selection over an expanded `<details>` gave a crop with

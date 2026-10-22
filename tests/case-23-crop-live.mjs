@@ -14,8 +14,15 @@
 
    Plus: de crop is vergeleken met een referentiescreenshot van de live pagina (zelfde
    box, annotator-UI verborgen); de snapshot belandt nooit in localStorage; een comment
-   bewerken maakt geen nieuwe crop; annotatie verwijderen = crop-bestand weg; en een
-   file://-pagina (snapshot direct naar /save) krijgt ook een live crop.
+   bewerken maakt geen nieuwe crop (ook niet na een herlaad); annotatie verwijderen =
+   crop-bestand weg; de pagina die na de selectie verandert, verandert de crop niet;
+   wachtwoordvelden en on*-attributen zitten niet in de snapshot; een vervangen of
+   mislukte popup laat geen snapshot in het geheugen achter; in quirks mode is de
+   viewport het venster; een selectie onder de viewport rendert op de viewport van de
+   reviewer; een file://-pagina (Origin "null") krijgt de crop uit het bestand.
+
+   Beveiliging staat als eigenschap in tests/test_live_crop.py (sanitiser, CSP, origin,
+   geen file://-render); hier staat geen aanvalspayload.
 
    B45: de screenshotbrowser draait met een eigen wegwerpprofiel en een mock-keychain
    (geen keychain-prompts), en --no-sandbox blijft opt-in zoals in B41. Dat deel draait
@@ -48,10 +55,24 @@ for (let i = 0; i < 50 && !omhoog; i++) {
 }
 if (!omhoog) { console.log(`  BLOKKED case-23: geen bridge op ${PORT}`); process.exit(2); }
 
-const TESTDIR = join(homedir(), 'html-annotator-tests');
+/* tests/run.sh geeft een tijdelijke pagina-root mee (HTML_ANNOTATOR_PAGES_ROOT); zonder
+   die variabele valt de case terug op de standaardroot (home). */
+const PAGES = process.env.HTML_ANNOTATOR_PAGES_ROOT;
+const TESTDIR = PAGES || join(homedir(), 'html-annotator-tests');
+const URLDIR = PAGES ? '' : 'html-annotator-tests/';
 mkdirSync(TESTDIR, { recursive: true });
 const slug = `zz-test-crop-live-${Date.now()}`;
 const bestand = join(TESTDIR, `${slug}.html`);
+const pUrl = (naam) => `http://127.0.0.1:${PORT}/p/${URLDIR}${naam}`;
+/* Origin van een /p/-pagina van deze bridge: alleen daarvan wordt een snapshot gerenderd. */
+const EIGEN = `http://127.0.0.1:${PORT}`;
+const extraBestanden = [];
+function schrijfPagina(naam, inhoud) {
+  const pad = join(TESTDIR, naam);
+  writeFileSync(pad, inhoud);
+  extraBestanden.push(pad);
+  return pad;
+}
 
 /* Kleuren zijn zo gekozen dat elke staat een eigen, eenduidige kleur heeft:
    rood = uitgeklapte details, groen = wat er bij dichte details op die plek staat,
@@ -84,6 +105,10 @@ writeFileSync(bestand, `<!doctype html><meta charset="utf-8"><title>${slug}</tit
 <div id="js"></div>
 <button id="knop" onclick="document.getElementById('js').style.background='#0000ff'">zet blauw</button>
 <div class="ruimte"></div>
+<div id="wissel" style="height:100px;margin:20px;width:400px;background:#00ff00"></div>
+<input id="pw" type="password" style="display:block;width:300px;height:30px;margin:20px">
+<div id="klik" onclick="this.style.background='#000000'" style="height:60px;width:300px;margin:20px;background:#00ffff"></div>
+<div class="ruimte"></div>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('js').style.background = '#888888';
@@ -98,6 +123,7 @@ const lees = () => { try { return JSON.parse(readFileSync(jsonPad(), 'utf8')); }
 
 function opruimen() {
   rmSync(bestand, { force: true });
+  extraBestanden.forEach((p) => rmSync(p, { recursive: true, force: true }));
 }
 
 let browser;
@@ -105,7 +131,13 @@ try {
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   const ctx = await browser.newContext({ viewport: { width: 900, height: 600 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
-  await page.goto(`http://127.0.0.1:${PORT}/p/html-annotator-tests/${slug}.html`, { waitUntil: 'load' });
+  /* Wat de snippet met /save meestuurt, per pagina. */
+  const saves = [];
+  const volg = (p) => p.on('request', (r) => {
+    if (r.method() === 'POST' && r.url().endsWith('/save')) { try { saves.push(r.postDataJSON()); } catch { /* geen json */ } }
+  });
+  volg(page);
+  await page.goto(pUrl(`${slug}.html`), { waitUntil: 'load' });
   await page.waitForFunction(() => window.HtmlAnnotator && window.HtmlAnnotator.bridge().ok, null, { timeout: 8000 });
 
   // Live staat neerzetten, zoals een reviewer het zou doen.
@@ -139,15 +171,19 @@ try {
     return buf;
   }
 
-  async function sleep_regio(r, comment) {
+  async function trek(p, r) {
+    await p.mouse.move(r.x, r.y);
+    await p.mouse.down();
+    await p.mouse.move(r.x + r.w / 2, r.y + r.h / 2, { steps: 4 });
+    await p.mouse.move(r.x + r.w, r.y + r.h, { steps: 4 });
+    await p.mouse.up();
+    await p.waitForSelector('#la-popup .la-comment-ed', { timeout: 3000 });
+  }
+  async function sleep_regio(r, comment, voorSave) {
     await modus(page, true);
-    await page.mouse.move(r.x, r.y);
-    await page.mouse.down();
-    await page.mouse.move(r.x + r.w / 2, r.y + r.h / 2, { steps: 4 });
-    await page.mouse.move(r.x + r.w, r.y + r.h, { steps: 4 });
-    await page.mouse.up();
-    await page.waitForSelector('#la-popup .la-comment-ed', { timeout: 3000 });
+    await trek(page, r);
     await page.type('#la-popup .la-comment-ed', comment);
+    if (voorSave) await voorSave();
     const n = lees().annotations.length;
     await page.click('#la-popup .la-save');
     for (let i = 0; i < 100; i++) {
@@ -272,7 +308,7 @@ try {
   {
     const ctx2 = await browser.newContext({ viewport: { width: 900, height: 600 }, deviceScaleFactor: 2 });
     const p2 = await ctx2.newPage();
-    await p2.goto(`http://127.0.0.1:${PORT}/p/html-annotator-tests/${slug}.html`, { waitUntil: 'load' });
+    await p2.goto(pUrl(`${slug}.html`), { waitUntil: 'load' });
     await p2.waitForFunction(() => window.HtmlAnnotator && window.HtmlAnnotator.bridge().ok, null, { timeout: 8000 });
     await p2.evaluate(() => window.scrollTo(0, 760));
     await p2.click('#det summary');
@@ -301,6 +337,144 @@ try {
     await ctx2.close();
   }
 
+  // 14a: de pagina verandert tussen selectie en Save; de crop toont het selectiemoment.
+  {
+    await page.evaluate(() => document.getElementById('wissel').scrollIntoView({ block: 'center' }));
+    await sleep(150);
+    const r = binnen(await vak('#wissel'));
+    const a = await sleep_regio(r, 'wissel', () => page.evaluate(() => {
+      document.getElementById('wissel').style.background = '#ff0000';
+    }));
+    const c = crop(a);
+    const kl = c ? await analyse(c, ['#00ff00', '#ff0000']) : null;
+    zeg(!!kl && kl.frac['#00ff00'] > 0.5 && kl.frac['#ff0000'] < 0.05 && a.cropSource === 'live',
+      `14a staat verandert na de selectie: crop toont het selectiemoment (groen ${kl ? (kl.frac['#00ff00'] * 100).toFixed(0) : '-'}%, rood ${kl ? (kl.frac['#ff0000'] * 100).toFixed(0) : '-'}%)`);
+  }
+
+  // 14d: wachtwoordvelden gemaskeerd, on*-attributen weg in de snapshot die de snippet stuurt.
+  {
+    await page.fill('#pw', 'geheim123');
+    await page.evaluate(() => document.getElementById('pw').scrollIntoView({ block: 'center' }));
+    await sleep(150);
+    const p1 = await vak('#pw'), p2 = await vak('#klik');
+    const r = { x: Math.min(p1.x, p2.x) - 4, y: p1.y - 4, w: Math.max(p1.x + p1.w, p2.x + p2.w) - Math.min(p1.x, p2.x) + 8, h: p2.y + p2.h - p1.y + 8 };
+    const n0 = saves.length;
+    const a = await sleep_regio(r, 'wachtwoord');
+    const s = saves.slice(n0).find((x) => x.annotation && x.annotation.comment === 'wachtwoord');
+    const html = (s && s.snapshot && s.snapshot.html) || '';
+    zeg(!!html && html.indexOf('geheim123') < 0 && html.indexOf('value="xxxxxxxxx"') >= 0,
+      '14d wachtwoord gemaskeerd in de snapshot (zelfde lengte, geen echte tekens)');
+    zeg(!!html && !/\son[a-z]+\s*=/i.test(html) && html.indexOf('id="klik"') >= 0,
+      '14d geen on*-attributen in de snapshot');
+    zeg(!!a && a.cropSource === 'live' && !!a.image, `14d crop van dat gebied is live (${a && a.cropSource})`);
+  }
+
+  // 7: een vervangen of mislukte popup laat geen snapshot in het geheugen achter.
+  {
+    const ids = () => page.evaluate(() => window.HtmlAnnotator._test.snapIds ? window.HtmlAnnotator._test.snapIds().length : -1);
+    await page.evaluate(() => document.getElementById('wissel').scrollIntoView({ block: 'center' }));
+    await sleep(150);
+    const r = binnen(await vak('#wissel'));
+    await modus(page, true);
+    await trek(page, r);
+    const na1 = await ids();
+    await modus(page, true);
+    await trek(page, { x: r.x + 5, y: r.y + 5, w: r.w - 20, h: r.h - 20 });
+    const na2 = await ids();
+    await page.click('#la-popup .la-cancel');
+    const na3 = await ids();
+    zeg(na1 === 1 && na2 === 1 && na3 === 0,
+      `7 popup vervangen door een nieuwe selectie: oude snapshot vergeten (${na1} → ${na2} → ${na3} na annuleren)`);
+    await page.route('**/save', (route) => route.abort());
+    const dlg = (d) => d.accept();
+    page.on('dialog', dlg);
+    await modus(page, true);
+    await trek(page, r);
+    await page.type('#la-popup .la-comment-ed', 'offline');
+    await page.click('#la-popup .la-save');
+    let na4 = -1;
+    for (let i = 0; i < 20; i++) { await sleep(100); na4 = await ids(); if (na4 === 0) break; }
+    zeg(na4 === 0, `7 opslaan mislukt (bridge weg): snapshot vergeten (${na4})`);
+    await page.unroute('**/save');
+    page.off('dialog', dlg);
+    await page.evaluate(() => {
+      const a = window.HtmlAnnotator.anns().find((x) => x.comment === 'offline');
+      if (a) return window.HtmlAnnotator.remove(a);
+    });
+    await modus(page, false);
+  }
+
+  // 2: na een herlaad een comment bewerken stuurt geen nieuwe snapshot en laat de crop staan.
+  if (a3 && a3.image) {
+    const voor = crop(a3);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.HtmlAnnotator && window.HtmlAnnotator.bridge().ok, null, { timeout: 8000 });
+    await modus(page, false);
+    const n0 = saves.length;
+    const badge = await page.$$eval('.la-badge', (bs) => bs.findIndex((b) => b.textContent === String(3)));
+    await page.locator('.la-badge').nth(badge).click();
+    await page.waitForSelector('#la-popup .la-comment-ed');
+    await page.click('#la-popup .la-comment-ed');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' na herlaad');
+    await page.click('#la-popup .la-save');
+    let na = null;
+    for (let i = 0; i < 50; i++) {
+      na = lees().annotations.find((x) => x.id === a3.id);
+      if (na && /na herlaad/.test(na.comment)) break;
+      await sleep(200);
+    }
+    const verstuurd = saves.slice(n0).filter((x) => x.annotation && x.annotation.id === a3.id);
+    zeg(verstuurd.length > 0 && verstuurd.every((x) => !x.snapshot),
+      `2 na herlaad: comment bewerken stuurt geen snapshot mee (${verstuurd.length} save(s), ${verstuurd.filter((x) => x.snapshot).length} met snapshot)`);
+    zeg(!!na && /na herlaad/.test(na.comment) && na.image === a3.image && na.cropSource === 'live'
+      && Buffer.compare(voor, crop(na)) === 0, '2 na herlaad: de crop van het selectiemoment blijft staan');
+  }
+
+  // 6: quirks mode (geen doctype): de viewport is het venster, niet de documenthoogte.
+  {
+    const naam = `${slug}-quirks.html`;
+    schrijfPagina(naam, `<html><head><title>${slug}-quirks</title></head><body style="margin:0">
+<div style="height:2400px;background:#eeeeee"></div>
+${readFileSync(join(SKILL, 'references', 'annotator-snippet.html'), 'utf8')}</body></html>`);
+    const pq = await ctx.newPage();
+    volg(pq);
+    await pq.goto(pUrl(naam), { waitUntil: 'load' });
+    await pq.waitForFunction(() => window.HtmlAnnotator && window.HtmlAnnotator.bridge().ok, null, { timeout: 8000 });
+    const quirks = await pq.evaluate(() => document.compatMode);
+    const n0 = saves.length;
+    await modus(pq, true);
+    await trek(pq, { x: 100, y: 100, w: 200, h: 100 });
+    await pq.type('#la-popup .la-comment-ed', 'quirks');
+    await pq.click('#la-popup .la-save');
+    for (let i = 0; i < 50 && !saves.slice(n0).some((x) => x.annotation && x.annotation.comment === 'quirks'); i++) await sleep(100);
+    const s = saves.slice(n0).find((x) => x.annotation && x.annotation.comment === 'quirks');
+    const vh = s && s.snapshot ? s.snapshot.vh : null;
+    zeg(quirks === 'BackCompat' && vh !== null && vh <= 600 && vh >= 500,
+      `6 quirks mode: snapshot-viewport is het venster (vh ${vh}, venster 600, ${quirks})`);
+    await pq.close();
+  }
+
+  // 5: selectie loopt onder de viewport door; de snapshot rendert op de viewport van de reviewer.
+  {
+    const naam = `${slug}-vh.html`;
+    const html = `<!doctype html><html><head><title>vh</title></head><body style="margin:0">
+<section style="height:100vh;background:#ff0000"></section><div style="height:2000px;background:#00ff00"></div></body></html>`;
+    schrijfPagina(naam, html);
+    const r5 = await fetch(`http://127.0.0.1:${PORT}/save`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: EIGEN },
+      body: JSON.stringify({
+        page: pUrl(naam), slug: `${slug}-vh`, title: 'vh', doc: { w: 900, h: 2600 },
+        snapshot: { html, vw: 900, vh: 600, sx: 0, sy: 0, dpr: 1 },
+        annotation: { id: 'vh-1', type: 'region', rect: { x: 100, y: 550, w: 200, h: 100 }, comment: 'vh' },
+      }),
+    }).then((x) => x.json());
+    const c = r5.ok && r5.image ? readFileSync(join(r5.jsonPath, '..', r5.image)) : null;
+    const kl = c ? await analyse(c, ['#ff0000', '#00ff00']) : null;
+    zeg(!!kl && kl.w === 224 && kl.h === 124 && Math.abs(kl.frac['#ff0000'] - 0.5) < 0.1 && Math.abs(kl.frac['#00ff00'] - 0.5) < 0.1,
+      `5 100vh-sectie blijft 600px hoog als de selectie onder de viewport doorloopt (${kl ? kl.w + 'x' + kl.h : '-'}, rood ${kl ? (kl.frac['#ff0000'] * 100).toFixed(0) : '-'}%, groen ${kl ? (kl.frac['#00ff00'] * 100).toFixed(0) : '-'}%)`);
+  }
+
   // file://-pagina: geen /p/, de snapshot gaat rechtstreeks mee naar /save.
   const snapHtml = readFileSync(bestand, 'utf8').split('<!-- HTML-ANNOTATOR')[0]
     .replace('<details id="det">', '<details id="det" open>')
@@ -319,14 +493,10 @@ try {
     zeg(rf0.ok && fa.cropSource === 'file' && !!fa.image, `zonder snapshot: oude route, cropSource = file (${fa.cropSource})`);
   }
 
-  // Een /snap/-token bestaat alleen tijdens het renderen.
-  {
-    const r404 = await fetch(`http://127.0.0.1:${PORT}/snap/onbekend`);
-    zeg(r404.status === 404, `/snap/<onbekend token> geeft 404 (${r404.status})`);
-  }
-
+  /* Een file://-pagina stuurt Origin "null": de bridge rendert die snapshot niet (B44),
+     de crop komt uit het bestand en liveCropError zegt waarom. */
   const r = await fetch(`http://127.0.0.1:${PORT}/save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'null' },
     body: JSON.stringify({
       page: 'file://' + bestand, pageFile: bestand, slug: slug + '-file', title: 'file',
       doc: { w: 900, h: 2400 },
@@ -334,26 +504,27 @@ try {
       annotation: { id: 'file-1', type: 'region', rect: { x: det.x, y: det.y + 760, w: det.w, h: det.h }, comment: 'file' },
     }),
   }).then((x) => x.json());
-  if (r.ok && r.image) {
-    const fa = JSON.parse(readFileSync(r.jsonPath, 'utf8')).annotations.find((x) => x.id === 'file-1') || {};
-    const kl = await analyse(readFileSync(join(r.jsonPath, '..', r.image)), ['#ff0000', '#00ff00']);
-    zeg(kl.frac['#ff0000'] > 0.5 && fa.cropSource === 'live',
-      `file://-pagina: crop uit de snapshot (rood ${(kl.frac['#ff0000'] * 100).toFixed(0)}%, cropSource ${fa.cropSource})`);
-  } else {
-    zeg(false, `file://-pagina: geen crop (${JSON.stringify(r).slice(0, 200)})`);
+  {
+    const fa = (r.ok && JSON.parse(readFileSync(r.jsonPath, 'utf8')).annotations.find((x) => x.id === 'file-1')) || {};
+    zeg(r.ok && fa.cropSource === 'file' && !!fa.image && /origin/.test(fa.liveCropError || ''),
+      `file://-pagina (Origin null): snapshot niet gerenderd, crop uit het bestand (${fa.cropSource}, ${fa.liveCropError})`);
   }
 
   // Zonder Pillow: het venster is de crop zelf (iframe verschoven); zelfde uitkomst.
+  // Chrome, Pillow en poort gaan als parameter mee; een eigen server serveert /snap/.
   {
     const uit = join(ROOT, 'zonder-pillow.png');
     const snapPad = join(ROOT, 'snap.json');
     writeFileSync(snapPad, JSON.stringify({ html: snapHtml, vw: 900, vh: 600, sx: 0, sy: 760, dpr: 1 }));
     const py = spawnSync('python3', ['-c', `
-import json, sys
+import json, sys, threading
 from html_annotator import bridge as b
-b.HEEFT_PILLOW = False
+srv = b.BridgeServer(("127.0.0.1", 0), b.Handler)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
 snap = json.load(open(sys.argv[1]))
-b.maak_crop_live(snap, sys.argv[2], json.loads(sys.argv[3]), sys.argv[4])
+b.maak_crop_live(snap, sys.argv[2], json.loads(sys.argv[3]), sys.argv[4],
+                 pillow=False, port=srv.server_address[1])
+srv.shutdown()
 `, snapPad, 'file://' + bestand, JSON.stringify({ x: det.x, y: det.y + 760, w: det.w, h: det.h }), uit],
     { cwd: SKILL, env, encoding: 'utf8' });
     if (py.status === 0 && existsSync(uit)) {
@@ -375,7 +546,11 @@ shot = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--screenshot="
 prof = [a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--user-data-dir=")]
 with open(os.environ["C23_ARGV"], "w") as f:
     json.dump({"argv": sys.argv[1:], "profielBestond": bool(prof) and os.path.isdir(prof[0])}, f)
-open(shot, "wb").write(b"png")
+import struct, zlib
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(shot, "wb").write(b"\\x89PNG\\r\\n\\x1a\\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+                      + chunk(b"IDAT", zlib.compress(b"\\x00\\xff\\xff\\xff")) + chunk(b"IEND", b""))
 `);
     chmodSync(nepChrome, 0o755);
     const run = (extra) => {
@@ -383,8 +558,8 @@ open(shot, "wb").write(b"png")
       const py = spawnSync('python3', ['-c', `
 import os, sys
 from html_annotator import bridge as b
-b.CHROME = sys.argv[1]
-b.run_chrome(["--screenshot=" + os.path.join(sys.argv[2], "shot.png"), "about:blank"], timeout=20)
+b.run_chrome(["--screenshot=" + os.path.join(sys.argv[2], "shot.png"), "about:blank"], timeout=20,
+             chrome=sys.argv[1])
 `, nepChrome, nep], { cwd: SKILL, env: { ...env, ...extra, C23_ARGV: argvPad }, encoding: 'utf8' });
       if (py.status !== 0) return { fout: (py.stderr || '').trim().split('\n').pop() };
       return JSON.parse(readFileSync(argvPad, 'utf8'));

@@ -257,13 +257,17 @@ fi
 if wil 23; then
   # Eigen bridge op een vrije poort met tijdelijke root en configmap; raakt 8791 niet.
   echo "case-23: crop uit de live snapshot, Chrome met eigen profiel (B44, B45)"
+  # Zonder browser: nep-Chrome, eigen bridges op vrije poorten.
+  python3 ./test_live_crop.py
+  [ $? -ne 0 ] && FALEN=$((FALEN + 1))
   if [ ! -d node_modules/playwright-core ]; then
     echo "BLOKKED case-23: playwright-core ontbreekt"
     BLOKKED=$((BLOKKED + 1))
   else
     c23_poort=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
     c23_root=$(mktemp -d)
-    XDG_CONFIG_HOME="$c23_root/cfg" APPDATA="$c23_root/cfg" \
+    mkdir -p "$c23_root/pages"
+    XDG_CONFIG_HOME="$c23_root/cfg" APPDATA="$c23_root/cfg" HTML_ANNOTATOR_PAGES_ROOT="$c23_root/pages" \
       HTML_ANNOTATOR_PORT="$c23_poort" HTML_ANNOTATOR_ROOT="$c23_root" \
       python3 -m html_annotator serve >/tmp/ann-c23-bridge.log 2>&1 &
     c23_pid=$!
@@ -271,7 +275,7 @@ if wil 23; then
       curl -s -o /dev/null --max-time 0.2 "http://127.0.0.1:$c23_poort/ping" && break
       sleep 0.2
     done
-    XDG_CONFIG_HOME="$c23_root/cfg" APPDATA="$c23_root/cfg" \
+    XDG_CONFIG_HOME="$c23_root/cfg" APPDATA="$c23_root/cfg" HTML_ANNOTATOR_PAGES_ROOT="$c23_root/pages" \
       HTML_ANNOTATOR_PORT="$c23_poort" HTML_ANNOTATOR_ROOT="$c23_root" node ./case-23-crop-live.mjs
     rc=$?
     [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))

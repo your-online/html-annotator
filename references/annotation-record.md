@@ -17,3 +17,6 @@ geen nieuw schema.
 
 `locator`: `path`, `start`/`end` (`path`, `node`, `offset`), `nth`, `label`.
 `refs[]`: `id`, `selectedText`, optioneel `locator`.
+`liveCropError`: waarom de live snapshot niet gebruikt is (andere origin dan de bridge,
+te groot, groter dan de viewport, Chrome-fout). Staat ook bij een behouden oudere crop;
+`cropSource` zegt dan waar die vandaan kwam.
