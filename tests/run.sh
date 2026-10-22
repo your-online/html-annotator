@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runner voor de annotator-bridge-suite.
 #
-#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–19 22 23 24
+#   tests/run.sh                # A7: 00 02–04 06 08–09 11–12 14–19 22 23 24 25 26
 #                               (geen case-01 spend, geen mutate)
 #   tests/run.sh 00 09 11       # de drie cases zonder browser (ook de CI-set)
 #   tests/run.sh 02 03          # alleen deze cases
@@ -27,7 +27,7 @@ CASE01_RUNS="${CASE01_RUNS:-3}"
 GEVRAAGD=("$@")
 # Default = wat A7 van iedereen eist. case-01 (spend) en case-10 (mutatie,
 # bewust traag + eigen boom) alleen als je ze noemt.
-DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18 19 22 23 24"
+DEFAULT="00 02 03 04 06 08 09 11 12 14 15 16 17 18 19 22 23 24 25 26"
 wil() {
   if [ ${#GEVRAAGD[@]} -eq 0 ]; then
     for g in $DEFAULT; do [ "$g" = "$1" ] && return 0; done
@@ -311,6 +311,66 @@ if wil 24; then
     kill "$c24_pid" 2>/dev/null || true
     wait "$c24_pid" 2>/dev/null || true
     rm -rf "$c24_root"
+  fi
+  echo
+fi
+
+if wil 25 || wil agenda; then
+  # Python-deel zonder bridge (poort wijst naar niets); browserdeel met een eigen
+  # bridge op een vrije poort, tijdelijke root en configmap; raakt 8791 niet.
+  echo "case-25: agenda-preview slepen → state.json → sync terug in de overlay (B47)"
+  python3 ./test_agenda.py
+  [ $? -ne 0 ] && FALEN=$((FALEN + 1))
+  if [ ! -d node_modules/playwright-core ]; then
+    echo "BLOKKED case-25 (browser): playwright-core ontbreekt"
+    BLOKKED=$((BLOKKED + 1))
+  else
+    c25_poort=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+    c25_root=$(mktemp -d)
+    XDG_CONFIG_HOME="$c25_root/cfg" APPDATA="$c25_root/cfg" \
+      HTML_ANNOTATOR_PORT="$c25_poort" HTML_ANNOTATOR_ROOT="$c25_root" \
+      python3 -m html_annotator serve >"$c25_root.bridge.log" 2>&1 &
+    c25_pid=$!
+    for _ in $(seq 1 25); do
+      curl -s -o /dev/null --max-time 0.2 "http://127.0.0.1:$c25_poort/ping" && break
+      sleep 0.2
+    done
+    XDG_CONFIG_HOME="$c25_root/cfg" APPDATA="$c25_root/cfg" \
+      HTML_ANNOTATOR_PORT="$c25_poort" HTML_ANNOTATOR_ROOT="$c25_root" node ./case-25-agenda-slepen.mjs
+    rc=$?
+    [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))
+    [ $rc -eq 1 ] && FALEN=$((FALEN + 1))
+    kill "$c25_pid" 2>/dev/null || true
+    wait "$c25_pid" 2>/dev/null || true
+    rm -rf "$c25_root" "$c25_root.bridge.log"
+  fi
+  echo
+fi
+
+if wil 26 || wil endpoint; then
+  # Eigen bridge op een vrije poort (alleen voor de /p/-tak), tijdelijke root en configmap.
+  echo "case-26: <meta name=\"html-annotator-endpoint\"> kiest de schrijfroute (B48)"
+  if [ ! -d node_modules/playwright-core ]; then
+    echo "BLOKKED case-26: playwright-core ontbreekt"
+    BLOKKED=$((BLOKKED + 1))
+  else
+    c26_poort=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+    c26_root=$(mktemp -d)
+    XDG_CONFIG_HOME="$c26_root/cfg" APPDATA="$c26_root/cfg" \
+      HTML_ANNOTATOR_PORT="$c26_poort" HTML_ANNOTATOR_ROOT="$c26_root" \
+      python3 -m html_annotator serve >"$c26_root.bridge.log" 2>&1 &
+    c26_pid=$!
+    for _ in $(seq 1 25); do
+      curl -s -o /dev/null --max-time 0.2 "http://127.0.0.1:$c26_poort/ping" && break
+      sleep 0.2
+    done
+    HTML_ANNOTATOR_PORT="$c26_poort" HTML_ANNOTATOR_ROOT="$c26_root" node ./case-26-endpoint-meta.mjs
+    rc=$?
+    [ $rc -eq 2 ] && BLOKKED=$((BLOKKED + 1))
+    [ $rc -eq 1 ] && FALEN=$((FALEN + 1))
+    kill "$c26_pid" 2>/dev/null || true
+    wait "$c26_pid" 2>/dev/null || true
+    rm -rf "$c26_root" "$c26_root.bridge.log"
   fi
   echo
 fi

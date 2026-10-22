@@ -257,6 +257,36 @@ responses, body; for proposals the status, toelichting and notitie).
 After sending, set `status: "verstuurd"` and re-render: the proposal turns
 green and picks up the real invitees and their responses.
 
+**The reviewer drags, the agent syncs.** Open proposals (and only those, never
+existing events) can be dragged on the page: up and down within the day and
+to another day of the same week, plus a grip on the top and bottom edge to
+move start or end (15-minute snap, minimum 15 minutes, mouse and touch).
+A live time label follows the pointer; a red border warns when a proposal
+overlaps an existing event, but nothing blocks. Every change autosaves via
+the bridge into the page's `state.json` (component `agenda`, key
+`voorstel-<nr>`: `{start, end, base, changedAt}`); the pill next to the week
+range says `opgeslagen` or `bridge uit`. On load the page applies that state
+over the overlay and marks the block `verplaatst` (old time and a
+`terug naar voorstel` button in the popover).
+
+Before every next step (presenting the proposals again, or sending
+invites), run the sync first and only then read the overlay:
+
+```bash
+python3 bin/agenda-sync.py <page>.voorstellen.json   # --page <page>.html if named differently; --dry-run to look
+```
+
+It writes moved times into the overlay with `notitie` "door <name> verplaatst
+van X naar Y". The name is `--by <name>`, else the overlay field `movedBy`,
+else `reviewer`. It skips a proposal whose overlay you changed after the drag
+(and says so), ignores drags on proposals that are no longer `open` (the
+real calendar leads once sent), and is a no-op when nothing moved. Then
+re-render with the build commands above: the page shows the same times,
+without the `verplaatst` label. On `.`, processing the annotations and this
+sync are one move: sync first, then apply the annotations to the synced
+overlay, then re-render once. `agenda-sync.py` is a short alias of
+`agenda-spec.py --apply-state`.
+
 ## Processing (short port)
 
 Triggers — do not ask for confirmation:

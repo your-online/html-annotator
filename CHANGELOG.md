@@ -34,6 +34,21 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--no-sandbox` (B41) is unchanged. Chrome is waited for and then stopped with
   its whole process tree before the profile is removed; only a complete PNG is
   accepted (B45).
+- Agenda preview: open proposals can be dragged (move within the week, grips
+  for start and end, 15-minute snap, mouse and touch). Every change autosaves
+  through the bridge into the page's `state.json` (component `agenda`, key
+  `voorstel-<nr>` with `base`); on load that state wins as long as the
+  overlay did not change since. `bin/agenda-sync.py` (alias of
+  `agenda-spec.py --apply-state`) writes moved times back into the overlay
+  with a note "door <name> verplaatst van X naar Y"; the name comes from
+  `--by`, the overlay field `movedBy`, or defaults to `reviewer` (B47,
+  `tests/test_agenda.py`, `tests/case-25-agenda-slepen.mjs`).
+- `<meta name="html-annotator-endpoint" content="https://...">`: a page
+  published by another server can point the annotator snippet and the
+  checklist snippet at that server instead of the local bridge. Only
+  `http(s)` values count, `/p/` pages of the bridge ignore it, and without it
+  nothing changes. The pill then reads "N saved remotely" (B48,
+  `tests/case-26-endpoint-meta.mjs`).
 - Continuous select (`continuous_select` in the config file,
   `HTML_ANNOTATOR_CONTINUOUS_SELECT` in the environment, on by default): after
   Save the region mode stays on, so the next region is one drag away instead

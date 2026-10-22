@@ -530,3 +530,25 @@ alle capabilities weg (`--cap-drop=ALL`) en `sleep infinity` als PID 1.
   `HTML_ANNOTATOR_ROOT`. In een container met de pagina's op een mount wil
   je de rondes daar ook, en met alleen een env-variabele stonden de
   instellingen op twee plekken. Zelfde voorrang als de andere sleutels.
+
+## 2026-10-20 — Agenda slepen en een endpoint-meta voor elders gepubliceerde pagina's
+
+- **Wie sleepte is een parameter.** De sync-notitie "door <naam> verplaatst
+  van X naar Y" haalt de naam uit `--by`, anders uit het overlayveld
+  `movedBy`, anders `reviewer`. Een vaste naam in de code past niet bij een
+  generieke skill; een overlayveld laat een agent het per pagina één keer
+  zetten, de vlag wint voor een losse run.
+- **State per voorstel draagt een `base`.** De pagina schrijft naast de nieuwe
+  tijd ook de overlaytijd waar de sleep van uitging. Laden en sync passen de
+  state alleen toe zolang de overlay nog die tijd heeft; heeft de agent het
+  voorstel intussen zelf verzet, dan wint de overlay en meldt de sync dat.
+  Verstuurde of vervallen voorstellen volgen de echte agenda en worden nooit
+  door een oude sleep verzet.
+- **De agenda-pagina zoekt de bridge zoals het snippet:** via `/p/` de eigen
+  origin, anders de standaardpoort. Een vaste `127.0.0.1:8791` zou op een
+  machine met een andere poort stil "bridge uit" tonen.
+- **`html-annotator-endpoint` in plaats van een productnaam.** De meta is een
+  algemeen contract (zelfde routes en antwoorden als de bridge), niet gebonden
+  aan één deelserver. Alleen `http(s)`, en op `/p/` genegeerd: de lokale
+  bridge blijft leidend waar hij bereikbaar is, en een meta met
+  `javascript:` of een relatief pad kan de schrijfroute niet kapen.

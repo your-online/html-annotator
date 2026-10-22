@@ -685,6 +685,45 @@ fields in `uitBridge` fails).
 
 </details>
 
+<details><summary><strong>B47 — A dragged agenda proposal lands in state.json and syncs back into the overlay.</strong></summary>
+
+*TESTED · platform: all (sync), posix (browser)*
+
+*Expected behaviour:* in the agenda preview only proposals with status
+`open` can be dragged (move, top and bottom grips, 15-minute snap). Each
+change is saved through the bridge as component `agenda`, key
+`voorstel-<nr>`, `{start, end, base}`; after a reload the page shows the
+dragged time. `agenda-sync.py` / `agenda-spec.py --apply-state` writes the
+new time into the overlay with the note "door <name> verplaatst van X naar
+Y" (`--by` > overlay `movedBy` > `reviewer`), keeps an existing note,
+skips a proposal whose overlay changed after the drag and any proposal that
+is no longer `open`, writes nothing with `--dry-run`, and is a no-op the
+second time. No real calendar is touched.
+
+*Evidence:* `tests/test_agenda.py` (no bridge: falls back to
+`<root>/<slug>/state.json`); `tests/case-25-agenda-slepen.mjs` (real drag
+on a `/p/` page of an ephemeral bridge, then `agenda-sync.py`).
+
+</details>
+
+<details><summary><strong>B48 — <code>&lt;meta name="html-annotator-endpoint"&gt;</code> picks the write route.</strong></summary>
+
+*TESTED · platform: posix (browser)*
+
+*Expected behaviour:* with an `http(s)` value and outside `/p/`, the
+annotator snippet sends `/session`, `/save` and the other routes to that
+URL (trailing slash stripped) and never to the local bridge; the pill reads
+"N saved remotely". The checklist snippet sends `/state` and `/state-save`
+there too. Without the meta (`file://`) the target stays
+`http://127.0.0.1:8791` and the pill "N saved"; a non-http value is
+ignored; on a `/p/` page of the bridge the bridge stays in charge, meta or
+not.
+
+*Evidence:* `tests/case-26-endpoint-meta.mjs` (the remote server is
+simulated with `page.route`).
+
+</details>
+
 <details><summary><strong>B23 — Region and text boxes scroll with the HTML they mark, including inside an <code>overflow:auto</code> scroller.</strong></summary>
 
 *TESTED · platform: posix*

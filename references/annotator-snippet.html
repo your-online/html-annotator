@@ -226,9 +226,24 @@
   "use strict";
   /* Via /p/ is de bridge de eigen origin, op welke poort ook. file:// valt terug op
      de standaardpoort (best effort: Chrome blokkeert file:// naar loopback toch al). */
-  var BRIDGE = (location.protocol.indexOf("http") === 0 && location.pathname.indexOf("/p/") === 0)
+  var OP_BRIDGE_P = location.protocol.indexOf("http") === 0 && location.pathname.indexOf("/p/") === 0;
+  /* Een server die de pagina elders publiceert (sandbox, origin null: de lokale bridge
+     is daar onbereikbaar) kan <meta name="html-annotator-endpoint" content="https://...">
+     injecteren. Dan schrijft het snippet daarheen, met dezelfde routes als de bridge.
+     Alleen http(s); op een /p/-pagina van de bridge wordt de meta genegeerd. */
+  var ENDPOINT = (function () {
+    if (OP_BRIDGE_P) return null;
+    var m = document.querySelector('meta[name="html-annotator-endpoint"]');
+    var u = m && m.getAttribute("content");
+    return u && /^https?:\/\//.test(u) ? u.replace(/\/+$/, "") : null;
+  })();
+  var BRIDGE = ENDPOINT ? ENDPOINT : OP_BRIDGE_P
     ? (location.protocol + "//" + location.host)
     : "http://127.0.0.1:8791";
+  function opgeslagen(n) { return ENDPOINT ? n + " saved remotely" : n + " saved"; }
+  function uitTekst() { return ENDPOINT ? "endpoint unreachable - localStorage only" : "bridge off - localStorage only"; }
+  function uitTitel() { return ENDPOINT ? "The annotation endpoint did not answer; reload the page (its token may have expired)."
+    : "Start the bridge: python -m html_annotator ensure"; }
   var KEY = "luc-annotaties:" + location.pathname;
   var anns = [];
   try { anns = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) {}
@@ -330,12 +345,11 @@
       if (typeof j.continuousSelect === "boolean") doorlopend = j.continuousSelect;
       doorlopendEnv = !!j.continuousSelectEnv;
       brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
-      zetStatus(true, j.count + " saved", j.jsonPath);
+      zetStatus(true, opgeslagen(j.count), j.jsonPath);
       return j;
     }).catch(function () {
       brug.ok = false; brug.jsonPath = null;
-      zetStatus(false, "bridge off - localStorage only",
-        "Start the bridge: python -m html_annotator ensure");
+      zetStatus(false, uitTekst(), uitTitel());
       return null;
     });
   }
@@ -1614,15 +1628,16 @@
         brug.ok = true; brug.jsonPath = j.jsonPath; brug.count = j.count; brug.round = j.round;
         delete laSnaps[a.id]; laBijBridge[a.id] = true;
         a.nr = j.nr; bewaarLokaal(); render();
-        zetStatus(true, j.count + " saved", j.jsonPath);
+        zetStatus(true, opgeslagen(j.count), j.jsonPath);
         return j;
       }).catch(function (e) {
         /* opslaan mislukt: de snapshot gaat niet meer mee (geheugen vrijgeven) */
         delete laSnaps[a.id];
         brug.ok = false;
-        zetStatus(false, "bridge off - localStorage only",
-          "Start the bridge: python -m html_annotator ensure");
-        alert("The bridge is not running, so nothing was written to disk.\n" +
+        zetStatus(false, uitTekst(), uitTitel());
+        if (ENDPOINT) alert("The annotation endpoint did not accept this annotation, so it is only in localStorage.\n" +
+          "Reload the page and save again." + (e && e.message ? "\n(" + e.message + ")" : ""));
+        else alert("The bridge is not running, so nothing was written to disk.\n" +
           "Your annotation is only in localStorage. Start the bridge with:\n" +
           "python -m html_annotator ensure");
         throw e;
@@ -1638,7 +1653,7 @@
       return post("/delete", Object.assign(basis(), { id: a.id }));
     }).then(function (j) {
       brug.count = j.count;
-      zetStatus(true, j.count + " saved", j.jsonPath);
+      zetStatus(true, opgeslagen(j.count), j.jsonPath);
     }).catch(function () { /* offline: localStorage is al bijgewerkt */ });
   }
 
@@ -1655,7 +1670,7 @@
         anns = anns.filter(function (x) { return x.id !== a.id; });
         bewaarLokaal(); render();
         brug.count = j.open;
-        zetStatus(true, j.open + " saved", j.jsonPath);
+        zetStatus(true, opgeslagen(j.open), j.jsonPath);
         return j;
       }).catch(function (e) {
         alert("Check-off failed: " + (e && e.message ? e.message : e));
