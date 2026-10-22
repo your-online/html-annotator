@@ -203,6 +203,7 @@ try {
   zeg(r3.status === 0 && o(1).start === '2026-10-07T10:00'
     && o(1).notitie === 'moved by tester from Wed 07-10 09:00–09:45 to Wed 07-10 10:00–10:45',
   `--apply-state zet #1 terug in de overlay ("${o(1).notitie}") ${r3.stderr}`);
+  zeg(/^state: .*\(bridge\)$/m.test(r3.stdout), `de sync liep via de bridge, niet via schijf (${r3.stdout.split('\n')[0]})`);
   zeg(o(3).start === '2026-10-08T13:00' && o(4).start === '2026-10-06T11:00',
     `sync laat het afgeleid verstuurde #3 en het door de agent verzette #4 staan (#3 ${o(3).start}, #4 ${o(4).start})`);
 
@@ -308,7 +309,8 @@ try {
     }
     zeg(!!e && e.start === '2026-10-07T11:00', `dev-server: state onder de slug van het paginabestand (${JSON.stringify(e)})`);
     const r = py(join(SKILL, 'bin', 'agenda-spec.py'), '--apply-state', overlay, '--page', devPagina, '--dry-run');
-    zeg(r.status === 0 && /#1 moved by reviewer from Wed 07-10 10:00–10:45 to Wed 07-10 11:00–11:45/.test(r.stdout),
+    zeg(r.status === 0 && /#1 moved by reviewer from Wed 07-10 10:00–10:45 to Wed 07-10 11:00–11:45/.test(r.stdout)
+      && /\(bridge\)$/m.test(r.stdout),
       `dev-server: de sync vindt de sleep (${(r.stdout + r.stderr).trim()})`);
     zeg(f5.length === 0, `geen paginafouten (${f5.join('; ')})`);
     await p5.close();

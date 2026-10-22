@@ -47,12 +47,16 @@ at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   defaults to `reviewer`. It refuses a page file that does not exist, skips
   proposals that are not open on the page (also when the page derived "sent"
   from a real event), and marks an applied drag as processed (`base` = the
-  new time) so it is never applied twice. The page UI is English (B47,
+  new time) so it is never applied twice, while a later drag on the not
+  yet re-rendered page is still applied. It reads the state from disk only
+  when no bridge runs, stops on a bridge error (`ok:false`, HTTP error,
+  time-out) and prints the route (`(bridge)` or `(disk)`). The page UI is English (B47,
   `tests/test_agenda.py`, `tests/case-25-agenda-slepen.mjs`).
 - `<meta name="html-annotator-endpoint" content="https://...">`: a page
   published by another server can point the annotator snippet, the
   checklist snippet and the agenda preview at that server instead of the
-  local bridge. Only `http(s)` values count, a `/p/` page of the bridge
+  local bridge. Only `http(s)` values in a `<head>` meta count, never on
+  `file://`; a `/p/` page of the bridge
   itself (loopback host and `/p/` path) ignores it, and without it nothing
   changes. The pill then reads "N saved remotely". The choice lives in one
   block of the annotator snippet (`HtmlAnnotator.bridgeRoute()`) (B48,

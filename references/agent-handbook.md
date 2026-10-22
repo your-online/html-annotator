@@ -96,7 +96,8 @@ send every call they would send to the bridge (`/session`, `/save`, `/delete`, `
 `/state`, `/state-save`, ...) to `<content>` + route instead, with the same
 JSON bodies. The pill reads **"N saved remotely"**, or "endpoint unreachable"
 when the server does not answer. Rules: only `http(s)://` values count (anything
-else is ignored); a trailing slash is stripped; on a `/p/` page of the bridge
+else is ignored); a trailing slash is stripped; only a meta in `<head>` counts
+(one in the body is ignored) and on `file://` the meta never counts; on a `/p/` page of the bridge
 (a loopback host `127.0.0.1`, `localhost` or `[::1]` and a `/p/` path) the
 meta is ignored and the bridge stays in charge; a `/p/` path on any other host
 is not the bridge, so there the meta counts. The rule lives once, in the

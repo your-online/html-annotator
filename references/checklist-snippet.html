@@ -19,12 +19,13 @@
      LA-BRIDGE-KEUZE), zodat die regel op één plek staat. Dit blok staat vóór het
      annotator-snippet, dus de route pas opvragen bij het posten. Zonder annotator op de
      pagina dezelfde regel in het kort: /p/ op een loopback-host = de bridge zelf, anders
-     de endpoint-meta (alleen http(s)), anders de standaardpoort. */
+     de endpoint-meta (alleen http(s), alleen in <head>, nooit op file://), anders de
+     standaardpoort. */
   function bridge(){
     var A=window.HtmlAnnotator;if(A&&A.bridgeRoute)return A.bridgeRoute().origin;
     var opP=location.protocol.indexOf("http")===0&&/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)
       &&location.pathname.indexOf("/p/")===0;
-    var m=!opP&&document.querySelector('meta[name="html-annotator-endpoint"]'),u=m&&m.getAttribute("content");
+    var m=!opP&&location.protocol!=="file:"&&document.querySelector('head > meta[name="html-annotator-endpoint"]'),u=m&&m.getAttribute("content");
     return u&&/^https?:\/\//.test(u)?u.replace(/\/+$/,""):opP?location.origin:"http://127.0.0.1:8791";}
   var items=[].slice.call(document.querySelectorAll("[data-la-check]"));
   if(!items.length)return;

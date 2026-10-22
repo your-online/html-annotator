@@ -28,12 +28,16 @@ zonder ".voorstellen.json" plus ".html"; bestaat die pagina niet, dan stopt de
 sync (geef --page mee). Alleen voorstellen die op de pagina open zijn (de status
 zoals agenda-preview hem afleidt, dus ook niet als er al een echt event is) en in
 de overlay open staan, worden verplaatst. Na het terugschrijven krijgt de entry
-in de state base = de nieuwe tijd: die sleep is verwerkt en komt niet terug als
-de agent het voorstel later zelf verzet. State via de bridge (POST /state en
-/state-save), anders rechtstreeks in <annotatie-root>/<slug>/state.json.
---dry-run schrijft niets.
+in de state base = de nieuwe tijd (en applied = {from, to}): die sleep is verwerkt
+en komt niet terug als de agent het voorstel later zelf verzet. Een volgende sleep
+op de nog niet herbouwde pagina (base = de tijd van vóór de sync) wordt wel
+toegepast, zolang de overlay sinds die sync niet veranderd is. State via de
+bridge (POST /state en /state-save); draait er geen bridge (verbinding geweigerd),
+dan rechtstreeks in <annotatie-root>/<slug>/state.json. Antwoordt de bridge met
+een fout (ok:false, HTTP-fout, time-out), dan stopt de sync. De uitvoer noemt de
+gebruikte route: "state: <pad> (bridge)" of "(disk)". --dry-run schrijft niets.
 """
-import argparse, datetime as D, json, os, re, sys, urllib.request
+import argparse, datetime as D, json, os, re, sys, urllib.error, urllib.request
 from zoneinfo import ZoneInfo
 
 AMS = ZoneInfo("Europe/Amsterdam")
@@ -115,36 +119,54 @@ def page_info(page):
 
 
 def _call(route, payload):
-    """POST naar de bridge; zonder bridge dezelfde handler rechtstreeks op schijf."""
+    """POST naar de bridge. Alleen als er geen bridge draait (verbinding geweigerd)
+    dezelfde handler rechtstreeks op schijf; een bridge die wel antwoordt maar faalt
+    (ok:false, HTTP-fout, time-out) is een fout, nooit stil op schijf verder.
+    Geeft (antwoord, "bridge" | "disk") terug."""
     bridge, config = _bridge()
+    url = config.base_url() + route
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
     try:
-        req = urllib.request.Request(config.base_url() + route, data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json"})
-        res = json.load(urllib.request.urlopen(req, timeout=3))
-        if res.get("ok"):
-            return res
-    except Exception:
-        pass
-    return {"/state": bridge.h_state, "/state-save": bridge.h_state_save}[route](payload)
+        with urllib.request.urlopen(req, timeout=3) as r:
+            res = json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            res = json.load(e)
+        except ValueError:
+            res = {"ok": False, "error": f"HTTP {e.code}"}
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ConnectionRefusedError):
+            return {"/state": bridge.h_state, "/state-save": bridge.h_state_save}[route](payload), "disk"
+        raise SystemExit(f"bridge {url} faalde ({e.reason}); sync gestopt")
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"bridge {url} faalde ({e}); sync gestopt")
+    if not isinstance(res, dict) or not res.get("ok"):
+        fout = res.get("error") if isinstance(res, dict) else None
+        raise SystemExit(f"bridge {url} gaf ok:false ({fout or res}); sync gestopt")
+    return res, "bridge"
 
 
 def read_state(page, slug=None):
-    """State van de pagina: eerst via de bridge, anders direct van schijf."""
-    res = _call("/state", {"pageFile": os.path.abspath(page), "slug": slug})
-    return res.get("state") or {}, res.get("statePath")
+    """State van de pagina: via de bridge, of van schijf als er geen bridge draait."""
+    res, via = _call("/state", {"pageFile": os.path.abspath(page), "slug": slug})
+    return res.get("state") or {}, res.get("statePath"), via
 
 
-def mark_applied(page, slug, nrs_tijden):
-    """Verwerkte sleeps: base = de nieuwe tijd, zodat ze nooit nog eens toegepast worden."""
-    for nr, (ns, ne) in nrs_tijden:
+def mark_applied(page, slug, toegepast):
+    """Verwerkte sleeps: base = de nieuwe tijd, zodat ze nooit nog eens toegepast worden;
+    applied onthoudt van welke tijd naar welke, voor een sleep op de oude pagina."""
+    for nr, (ns, ne), (os_, oe) in toegepast:
         _call("/state-save", {"pageFile": os.path.abspath(page), "slug": slug, "component": "agenda",
-                              "key": f"voorstel-{nr}", "value": {"base": {"start": ns, "end": ne}}})
+                              "key": f"voorstel-{nr}", "value": {
+                                  "base": {"start": ns, "end": ne},
+                                  "applied": {"from": {"start": os_, "end": oe}, "to": {"start": ns, "end": ne}}}})
 
 
 def apply_state(overlay, state, door=None, status=None):
     """Schrijft verplaatste voorstellen uit state terug in de overlay (in place).
     status: {nr: status} zoals de pagina hem toont (afgeleid door agenda-preview).
-    Geeft (regels voor de uitvoer, [(nr, (start, end))] van de toegepaste) terug."""
+    Geeft (regels voor de uitvoer, [(nr, (nieuw), (oud))] van de toegepaste) terug."""
     comp = ((state or {}).get("components") or {}).get("agenda") or {}
     door = (door or overlay.get("movedBy") or "reviewer").strip() or "reviewer"
     log, toegepast = [], []
@@ -164,7 +186,12 @@ def apply_state(overlay, state, door=None, status=None):
             log.append(f"#{p['nr']} overgeslagen: status {st}, de agenda is "
                        f"leidend (sleep naar {fmt(ns, ne)} genegeerd)")
             continue
-        if base and (base.get("start", "")[:16], base.get("end", "")[:16]) != (os_, oe):
+        # Een sleep op de pagina van vóór de vorige sync heeft base = de tijd van vóór die
+        # sync; die geldt nog zolang de overlay staat waar die sync hem neerzette.
+        ap = e.get("applied") or {}
+        kort = lambda x: ((x or {}).get("start", "")[:16], (x or {}).get("end", "")[:16])
+        oude_pagina = bool(ap) and kort(ap.get("from")) == kort(base) and kort(ap.get("to")) == (os_, oe)
+        if base and kort(base) != (os_, oe) and not oude_pagina:
             log.append(f"#{p['nr']} overgeslagen: overlay is na het slepen gewijzigd "
                        f"({fmt(os_, oe)}, sleep ging uit van {fmt(base['start'], base['end'])})")
             continue
@@ -172,7 +199,7 @@ def apply_state(overlay, state, door=None, status=None):
         zin = f"moved by {door} from {fmt(os_, oe)} to {fmt(ns, ne)}"
         p["notitie"] = (p.get("notitie") + " · " + zin) if p.get("notitie") else zin
         log.append(f"#{p['nr']} {zin}")
-        toegepast.append((p["nr"], (ns, ne)))
+        toegepast.append((p["nr"], (ns, ne), (os_, oe)))
     return log, toegepast
 
 
@@ -182,14 +209,14 @@ def main_apply(a):
         raise SystemExit("geef --page mee")
     slug, status = page_info(page)
     overlay = json.load(open(a.apply_state, encoding="utf-8"))
-    state, sp = read_state(page, slug)
+    state, sp, via = read_state(page, slug)
     log, toegepast = apply_state(overlay, state, a.by, status)
     moved = [r for r in log if " overgeslagen: " not in r]
     if moved and not a.dry_run:
         with open(a.apply_state, "w", encoding="utf-8") as f:
             json.dump(overlay, f, ensure_ascii=False, indent=1)
         mark_applied(page, slug, toegepast)
-    print(f"state: {sp}")
+    print(f"state: {sp} ({via})")
     print("\n".join(log) if log else "geen verplaatsingen; overlay ongewijzigd")
     if moved and a.dry_run:
         print("(dry-run: niets geschreven)")

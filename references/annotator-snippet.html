@@ -232,13 +232,15 @@
         origin, op welke poort ook, en negeert de endpoint-meta;
      2. anders wint <meta name="html-annotator-endpoint" content="https://..."> (een
         server die de pagina elders publiceert: sandbox, origin null). Alleen http(s),
-        een slash aan het eind gaat eraf;
+        een slash aan het eind gaat eraf; alleen een meta in <head> telt (een meta in
+        de body kan uit geplakte of geciteerde inhoud komen) en op file:// telt hij
+        nooit (een lokaal bestand schrijft niet naar een willekeurige host);
      3. anders de standaardpoort (file://: best effort, Chrome blokkeert file:// naar
         loopback toch al). */
   function laBridgeKeuze() {
     var opP = location.protocol.indexOf("http") === 0 &&
       /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname) && location.pathname.indexOf("/p/") === 0;
-    var m = opP ? null : document.querySelector('meta[name="html-annotator-endpoint"]');
+    var m = opP || location.protocol === "file:" ? null : document.querySelector('head > meta[name="html-annotator-endpoint"]');
     var u = m && m.getAttribute("content");
     var ep = u && /^https?:\/\//.test(u) ? u.replace(/\/+$/, "") : null;
     return { origin: ep || (opP ? location.protocol + "//" + location.host : "http://127.0.0.1:8791"), remote: !!ep };

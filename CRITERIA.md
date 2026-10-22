@@ -710,22 +710,31 @@ exist, writes the new time into the overlay with the note "moved by
 existing note, skips a proposal whose overlay changed after the drag and
 any proposal that is not open in the overlay or on the page, sets `base`
 to the new time in the state after writing (the drag is processed and
-never applied again), writes nothing with `--dry-run`, and is a no-op the
-second time. No real calendar is touched.
+never applied again), still applies a later drag made on the page from
+before that sync (its `base` is the pre-sync time) as long as the overlay
+is where that sync put it, writes nothing with `--dry-run`, and is a no-op
+the second time. It reads and writes the state through the bridge and only
+falls back to `<root>/<slug>/state.json` when the connection is refused; a
+bridge that answers `ok:false`, an HTTP error or a time-out stops the sync
+with a non-zero exit. The first output line names the route: `state:
+<path> (bridge)` or `(disk)`. No real calendar is touched.
 
 *Known gaps:* the derived status comes from the page as last rendered: an
 invite sent after the last render is only seen once the page is
 re-rendered (or the overlay says `verstuurd`). After a sync and before
-the re-render, a reload of the old page shows the old overlay time (its
-`base` no longer matches); the handbook says to re-render right after the
+the re-render, a reload of the old page still shows the old overlay time
+(its `base` no longer matches); a drag made there is not lost, the next
+sync applies it, but the handbook still says to re-render right after the
 sync. The checklist snippet still sends only `page` as identity, so on a
 dev server (not `/p/`, not `file://`) its state lands under the default
 slug `pagina`.
 
 *Evidence:* `tests/test_agenda.py` (no bridge: falls back to the bridge's
-own handlers on `<root>/<slug>/state.json`); `tests/case-25-agenda-slepen.mjs`
-(real drags on a `/p/` page of an ephemeral bridge and on a local dev
-server with the endpoint meta, then `agenda-spec.py --apply-state`).
+own handlers on `<root>/<slug>/state.json` and says `(disk)`; a second
+drag from the not re-rendered page; a fake bridge answering `ok:false`
+stops the sync); `tests/case-25-agenda-slepen.mjs` (real drags on a `/p/`
+page of an ephemeral bridge and on a local dev server with the endpoint
+meta, then `agenda-spec.py --apply-state`, asserting `(bridge)`).
 
 </details>
 
@@ -740,16 +749,18 @@ or `[::1]` and a `/p/` path), the annotator snippet sends `/session`,
 routes to that URL (trailing slash stripped) and never to the local
 bridge; the pill reads "N saved remotely". The checklist snippet and the
 agenda preview send `/state` and `/state-save` there too. A `/p/` path on
-another host does not count as the bridge. Without the meta (`file://`)
-the target stays `http://127.0.0.1:8791` and the pill "N saved"; a
-non-http value is ignored; on a `/p/` page of the bridge the bridge stays
+another host does not count as the bridge. Without the meta the target
+stays `http://127.0.0.1:8791` and the pill "N saved"; a non-http value is
+ignored, and so is a meta outside `<head>` and any meta on `file://` (a
+local file never writes to another host); on a `/p/` page of the bridge the bridge stays
 in charge, meta or not. The rule lives once (block `LA-BRIDGE-KEUZE` in
 the annotator snippet); the agenda preview inlines it at build time, the
 checklist asks `HtmlAnnotator.bridgeRoute()` and only falls back to a short
 copy when the annotator is not on the page.
 
 *Evidence:* `tests/case-26-endpoint-meta.mjs` (the remote server is
-simulated with `page.route`).
+simulated with `page.route`; meta in the body and meta on `file://` are
+ignored by both snippets).
 
 </details>
 

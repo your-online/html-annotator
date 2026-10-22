@@ -1,8 +1,9 @@
 /* B48: <meta name="html-annotator-endpoint" content="<https-url>"> laat het snippet en
    het checklist-snippet naar een andere server schrijven dan de lokale bridge (een
-   pagina die elders gepubliceerd is, sandbox, origin null). Zonder die meta (file://)
-   en via /p/ van de bridge zelf (loopback-host, ook mét meta) blijft het gedrag exact
-   zoals het was: 127.0.0.1:8791 resp. de bridge zelf, pil "N saved". Een /p/-pad op een
+   pagina die elders gepubliceerd is, sandbox, origin null). Zonder die meta, met een
+   meta buiten <head>, op file:// (ook mét meta) en via /p/ van de bridge zelf
+   (loopback-host, ook mét meta) blijft het gedrag exact zoals het was: 127.0.0.1:8791
+   resp. de bridge zelf, pil "N saved". Een /p/-pad op een
    andere host is geen bridge: daar wint de meta, ook voor de agenda-pagina.
 
    De publicerende server wordt met page.route nagebootst: het gaat om de keuze van
@@ -32,6 +33,8 @@ const evilPagina = join(TESTDIR, `zz-endpoint-evil-${stamp}.html`);
 const lijstPagina = join(TESTDIR, `zz-endpoint-lijst-${stamp}.html`);
 const agendaPagina = join(TESTDIR, `zz-endpoint-agenda-${stamp}.html`);
 const agendaSpec = join(TESTDIR, `zz-endpoint-agenda-${stamp}.spec.json`);
+const bodyMetaPagina = join(TESTDIR, `zz-endpoint-bodymeta-${stamp}.html`);
+const lijstKaal = join(TESTDIR, `zz-endpoint-lijstkaal-${stamp}.html`);
 const body = (meta, extra = '') => `<!doctype html><html><head>${meta}<meta charset="utf-8"><title>endpoint ${stamp}</title></head>
 <body><h1 id="h">Kop</h1><p id="p">Eerste alinea om te annoteren.</p>${extra}${snippet}</body></html>`;
 const META = `<meta name="html-annotator-endpoint" content="${EP}/">`;
@@ -40,10 +43,15 @@ writeFileSync(kalePagina, body(''));
 writeFileSync(evilPagina, body('<meta name="html-annotator-endpoint" content="javascript:alert(1)">'));
 writeFileSync(lijstPagina, `<!doctype html><html><head>${META}<meta charset="utf-8"><title>lijst ${stamp}</title></head>
 <body><ul><li data-la-check="punt-1"><span class="what">Punt een</span></li></ul>${checklist}</body></html>`);
+// meta in de body (bv. geciteerde of geplakte inhoud): telt niet, voor beide snippets
+writeFileSync(bodyMetaPagina, body('', `${META}<ul><li data-la-check="punt-1"><span class="what">Punt een</span></li></ul>${checklist}`));
+writeFileSync(lijstKaal, `<!doctype html><html><head><meta charset="utf-8"><title>lijst ${stamp}</title></head>
+<body>${META}<ul><li data-la-check="punt-1"><span class="what">Punt een</span></li></ul>${checklist}</body></html>`);
 
 let falen = 0;
 const zeg = (ok, tekst) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  case-26: ${tekst}`); if (!ok) falen++; };
-const opruimen = () => [metaPagina, kalePagina, evilPagina, lijstPagina, agendaPagina, agendaSpec].forEach((f) => rmSync(f, { force: true }));
+const opruimen = () => [metaPagina, kalePagina, evilPagina, lijstPagina, agendaPagina, agendaSpec,
+  bodyMetaPagina, lijstKaal].forEach((f) => rmSync(f, { force: true }));
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -68,17 +76,40 @@ async function nepServer(page, bodies) {
   return gezien;
 }
 
+/* Serveert een testbestand als https://pages.example.test/<naam> (een publicerende server). */
+async function serveer(page, bestand, naam) {
+  const html = readFileSync(bestand, 'utf8');
+  await page.route('https://pages.example.test/**', (route) => route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, contentType: 'text/html', body: html })
+    : route.fulfill({ status: 404, body: '' }));
+  return `https://pages.example.test/${naam}`;
+}
+
+/* Vangt de lokale standaardpoort; geeft de lijst gevraagde paden terug. */
+async function nepBridge(page) {
+  const gezien = [];
+  await page.route('http://127.0.0.1:8791/**', async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    gezien.push(new URL(req.url()).pathname);
+    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ok: true, round: 1, jsonPath: '/tmp/x.json', count: 0, total: 0, maxNr: 0,
+        annotations: [], state: { components: {} } }) });
+  });
+  return gezien;
+}
+
 let browser;
 try {
   browser = await chromium.launch({ channel: 'chrome', headless: true });
 
-  // 1. file:// mét meta → endpoint, pil "N saved remotely", lokale bridge nooit geraakt
+  // 1. elders gepubliceerd (https) mét meta → endpoint, pil "N saved remotely", lokale bridge nooit geraakt
   {
     const page = await browser.newPage();
     const gezien = await nepServer(page);
     let bridgeGeraakt = false;
     await page.route('http://127.0.0.1:8791/**', (route) => { bridgeGeraakt = true; return route.abort(); });
-    await page.goto(pathToFileURL(metaPagina).href, { waitUntil: 'load' });
+    await page.goto(await serveer(page, metaPagina, 'meta.html'), { waitUntil: 'load' });
     await page.waitForFunction(() => /saved remotely/.test(document.getElementById('la-status')?.textContent || ''),
       null, { timeout: 5000 }).catch(() => {});
     const api = await page.evaluate(() => window.HtmlAnnotator._test.bridgeOrigin);
@@ -153,14 +184,14 @@ try {
     await page.close();
   }
 
-  // 5. checklist-snippet met meta: /state en /state-save gaan naar het endpoint
+  // 5. checklist-snippet met meta (https): /state en /state-save gaan naar het endpoint
   {
     const page = await browser.newPage();
     const bodies = [];
     const gezien = await nepServer(page, bodies);
     let bridgeGeraakt = false;
     await page.route('http://127.0.0.1:8791/**', (route) => { bridgeGeraakt = true; return route.abort(); });
-    await page.goto(pathToFileURL(lijstPagina).href, { waitUntil: 'load' });
+    await page.goto(await serveer(page, lijstPagina, 'lijst.html'), { waitUntil: 'load' });
     await page.waitForSelector('.la-check', { timeout: 3000 });
     await page.click('.la-check');
     for (let i = 0; i < 20 && !gezien.includes('/ann/TESTTOKEN/state-save'); i++) await page.waitForTimeout(100);
@@ -221,6 +252,45 @@ try {
     for (let i = 0; i < 20 && !gezien.includes('/ann/TESTTOKEN/state-save'); i++) await page.waitForTimeout(100);
     zeg(gezien.includes('/ann/TESTTOKEN/state') && gezien.includes('/ann/TESTTOKEN/state-save') && eigen.length === 0,
       `losse checklist op /p/ van een niet-loopback-host volgt de meta (${gezien.join(', ')} | ${eigen.join(', ')})`);
+    await page.close();
+  }
+
+  // 8. file:// mét meta in <head> → de meta telt niet: annotator en checklist-terugval
+  //    blijven op 127.0.0.1:8791, niets naar het endpoint
+  for (const [bestand, wat] of [[metaPagina, 'annotator'], [lijstPagina, 'losse checklist']]) {
+    const page = await browser.newPage();
+    const ep = await nepServer(page);
+    const lokaal = await nepBridge(page);
+    await page.goto(pathToFileURL(bestand).href, { waitUntil: 'load' });
+    if (wat === 'annotator') {
+      const api = await page.evaluate(() => window.HtmlAnnotator._test.bridgeOrigin);
+      zeg(api === 'http://127.0.0.1:8791', `file:// met meta: ${wat} negeert de meta (${api})`);
+      await page.waitForFunction(() => / saved$/.test(document.getElementById('la-status')?.textContent || ''),
+        null, { timeout: 5000 }).catch(() => {});
+    } else {
+      await page.click('.la-check');
+      for (let i = 0; i < 20 && !lokaal.includes('/state-save'); i++) await page.waitForTimeout(100);
+    }
+    zeg(ep.length === 0 && lokaal.length > 0,
+      `file:// met meta: ${wat} schrijft niet naar het endpoint (endpoint: ${ep.join(', ')} | lokaal: ${lokaal.join(', ')})`);
+    await page.close();
+  }
+
+  // 9. meta in de body (https) → telt niet, voor annotator, checklist via de annotator en de
+  //    checklist-terugval
+  for (const [bestand, wat] of [[bodyMetaPagina, 'annotator + checklist'], [lijstKaal, 'losse checklist']]) {
+    const page = await browser.newPage();
+    const ep = await nepServer(page);
+    const lokaal = await nepBridge(page);
+    await page.goto(await serveer(page, bestand, 'body.html'), { waitUntil: 'load' });
+    if (wat !== 'losse checklist') {
+      const api = await page.evaluate(() => window.HtmlAnnotator._test.bridgeOrigin);
+      zeg(api === 'http://127.0.0.1:8791', `meta in de body: annotator negeert de meta (${api})`);
+    }
+    await page.click('.la-check');
+    for (let i = 0; i < 20 && !lokaal.includes('/state-save'); i++) await page.waitForTimeout(100);
+    zeg(ep.length === 0 && lokaal.includes('/state-save'),
+      `meta in de body: ${wat} schrijft niet naar het endpoint (endpoint: ${ep.join(', ')} | lokaal: ${lokaal.join(', ')})`);
     await page.close();
   }
 } catch (e) {

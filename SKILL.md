@@ -288,7 +288,12 @@ the drag (and says so), ignores drags on proposals that are not open on
 the page (the real calendar leads once sent, also when the page derived
 "sent" from a real event) or in the overlay, and is a no-op when nothing
 moved. An applied drag gets `base` = the new time in `state.json`, so it
-is never applied again, also not after you move that proposal yourself.
+is never applied again, also not after you move that proposal yourself;
+a new drag on the not yet re-rendered page is still applied at the next
+sync, unless you moved that proposal after the sync. The sync reads the
+state through the bridge, or from disk only when no bridge runs; the
+first line says which (`state: <path> (bridge)` or `(disk)`), and a
+bridge that answers with an error stops the sync.
 Then re-render with the build commands above: the page shows the same
 times, without the `moved` label. On `.`, processing the annotations and
 this sync are one move: sync first, then apply the annotations to the
